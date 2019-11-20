@@ -7,7 +7,7 @@
 import tensorflow as tf
 from NFG_lite import NFG4img, Aggregator
 import numpy as np
-print("meta learning.py, 11:19 23:50")
+print("meta learning.py, 11:20 16:00")
 
 class conv_block_v2(tf.keras.layers.Layer):
     def __init__(self, out_channels, conv_padding = "SAME", pooling_padding = "VALID"):
@@ -381,16 +381,41 @@ class CNN_TPN(tf.keras.Model):
 
         ys_one_hot = tf.one_hot(ys, depth=num_classes)
 
+        y = tf.tile(tf.reshape(
+            tf.range(0, num_classes), [num_classes, 1]), [1, num_queries])
+
+        y_one_hot = tf.one_hot(y, depth=num_classes, dtype=tf.float32)
+
         s = tf.reshape(s, [-1, s_shape[2], s_shape[3], s_shape[4]])
         q = tf.reshape(q, [-1, q_shape[2], q_shape[3], q_shape[4]])
 
         emb_s = self.encoder(s)
         emb_q = self.encoder(q)
-        emb_dim = tf.shape(emb_s)[-1]
+        #TODO this loss is not used in original paper, but in order to reach the acc the original paper, we had to use this
 
-        ce_loss, acc, sigma_value = self.label_prop(emb_s, emb_q, ys_one_hot)
+        z_dim = emb_s.shape[-1]
+        z_proto = tf.reduce_mean(tf.reshape(
+            emb_s, [num_classes, num_support, z_dim]), axis=1)
 
-        return sigma_value, ce_loss, acc
+        # print("z_proto.shape", z_proto.shape)
+        # print("zq.shape", zq.shape)
+
+        dists = euclidean_distance(emb_q, z_proto)
+        # print("dists.shape", dists.shape)
+
+        _log_dists = tf.nn.log_softmax(-dists, axis=1)
+        # print("_log_dists.shape", _log_dists.shape)
+        log_p_y = tf.reshape(_log_dists, [num_classes, num_queries, -1])
+
+
+        proto_loss = -tf.reduce_mean(tf.reshape(tf.reduce_sum(tf.multiply(y_one_hot, log_p_y), axis=-1), [-1]))
+
+
+        ###############################################################################################
+        #TODO originally this is no stop gradient in original paper
+        ce_loss, acc, sigma_value = self.label_prop(tf.stop_gradient(emb_s), tf.stop_gradient(emb_q), ys_one_hot)
+
+        return proto_loss, ce_loss, acc
 
     def label_prop(self, x, u, ys):
 

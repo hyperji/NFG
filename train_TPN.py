@@ -4,7 +4,7 @@
 # @FileName: meta_learning_train.py
 # @E-mail: hj@jimhe.cn
 
-from meta_learning import Prototypical_Nets, NFG_Prototypical_Nets
+from meta_learning import CNN_TPN
 from meta_learning_data import MiniImageNet_Generator, CUB_Generator
 import numpy as np
 import pickle
@@ -13,7 +13,7 @@ import argparse
 from sklearn.preprocessing import LabelEncoder
 import os
 import glob
-print("11:20,  16:00")
+print("11:20,  16:46")
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -48,8 +48,25 @@ def get_the_latest_model_version(model_names):
 train_loss = tf.keras.metrics.Mean(name='train_loss')
 train_accuracy = tf.keras.metrics.Mean(name='train_accuracy')
 
+@tf.function
+def dual_train_step(model, FeatEncOpt, RelModOpt, S, Q, epoch):
+    initial_lr = 1e-3
+    lr = max(0.5 ** (epoch // 200) * initial_lr, 1e-5)
+    print("lr", lr)
+    FeatEncOpt.learning_rate = lr
+    RelModOpt.learning_rate = lr
 
+    with tf.GradientTape(persistent=True) as tape:
+        FeatEncLoss, RelModLoss, acc = model(S, Q)
+    FeatEncGrads = tape.gradient(FeatEncLoss, model.encoder.trainable_variables)
+    RelModGrads = tape.gradient(RelModLoss, model.relation.trainable_variables)
 
+    FeatEncOpt.apply_gradients(zip(FeatEncGrads, model.encoder.trainable_variables))
+    RelModOpt.apply_gradients(zip(RelModGrads, model.relation.trainable_variables))
+    train_loss(RelModLoss)
+    # return acc
+    train_accuracy(acc)
+'''
 @tf.function
 def train_step(model, optimizer, S, Q, epoch):
     # tar_inp = tar[:, :-1]
@@ -75,7 +92,7 @@ def train_step(model, optimizer, S, Q, epoch):
     train_loss(loss)
     #return acc
     train_accuracy(acc)
-
+'''
 n_way_eval = 5
 n_shot_eval = 5
 n_query_eval = 15
@@ -179,10 +196,10 @@ if __name__ == "__main__":
     print("n_query_train", n_query_train)
 
 
-    if arg.method == 'CNN_ProtoNet':
-        model = Prototypical_Nets(hidden_dim=h_dim, final_dim=z_dim)
-    elif arg.method == 'NFG_ProtoNet':
-        model = NFG_Prototypical_Nets(ksize=3, strides=2, d_neuron=64, dk=8, dv=64, Nh=8, dact=8, final_dim=64)
+    if arg.method == 'CNN_TPN':
+        model = CNN_TPN(h_dim, z_dim, rn=300, k=20, alpha=0.99)
+    elif arg.method == 'NFG_TPN':
+        raise NotImplementedError
     else:
         raise NotImplementedError
     latest_version = 0
@@ -199,7 +216,8 @@ if __name__ == "__main__":
             model.load_weights(restore_path)
 
 
-    optimizer = tf.keras.optimizers.Adam()
+    FeatEnc_optimizer = tf.keras.optimizers.Adam()
+    RelMod_optimizer = tf.keras.optimizers.Adam()
 
     for eph in range(latest_version, n_epochs+latest_version):
         for episode in range(n_episodes):
@@ -208,7 +226,7 @@ if __name__ == "__main__":
             # inp -> portuguese, tar -> english
             data = train_generator[episode]
             #print("data[0].shape", data[0].shape)
-            train_step(model, optimizer, data[0], data[1], epoch=eph)
+            dual_train_step(model, FeatEnc_optimizer, RelMod_optimizer, data[0], data[1], epoch=eph)
             if (episode + 1) % log_every_n_samples == 0:
                 # print(ls, ac)
 
