@@ -4,7 +4,7 @@
 # @FileName: meta_learning_train.py
 # @E-mail: hj@jimhe.cn
 
-from meta_learning import CNN_TPN
+from meta_learning import CNN_TPN_stop_grad, CNN_TPN
 from meta_learning_data import MiniImageNet_Generator, CUB_Generator
 import numpy as np
 import pickle
@@ -13,7 +13,7 @@ import argparse
 from sklearn.preprocessing import LabelEncoder
 import os
 import glob
-print("11:20,  16:46")
+print("11:21,  16:30")
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -45,13 +45,16 @@ def get_the_latest_model_version(model_names):
     else:
         return max(list(map(get_model_version, model_names)))
 
+loss_object = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
+
+
 train_loss = tf.keras.metrics.Mean(name='train_loss')
 train_accuracy = tf.keras.metrics.Mean(name='train_accuracy')
 
 @tf.function
 def dual_train_step(model, FeatEncOpt, RelModOpt, S, Q, epoch):
     initial_lr = 1e-3
-    lr = max(0.5 ** (epoch // 200) * initial_lr, 1e-5)
+    lr = max(0.5 ** (epoch // 100) * initial_lr, 1e-5)
     print("lr", lr)
     FeatEncOpt.learning_rate = lr
     RelModOpt.learning_rate = lr
@@ -66,13 +69,13 @@ def dual_train_step(model, FeatEncOpt, RelModOpt, S, Q, epoch):
     train_loss(RelModLoss)
     # return acc
     train_accuracy(acc)
-'''
+
 @tf.function
-def train_step(model, optimizer, S, Q, epoch):
+def train_step(model, optimizer, S, Q, epoch, y_true):
     # tar_inp = tar[:, :-1]
     # tar_real = tar[:, 1:]
     initial_lr = 1e-3
-    lr = max(0.5**(epoch//200)*initial_lr, 1e-5)
+    lr = max(0.5**(epoch//100)*initial_lr, 1e-5)
     print("lr", lr)
     optimizer.learning_rate = lr
 
@@ -81,9 +84,10 @@ def train_step(model, optimizer, S, Q, epoch):
         #logits = model(X, training=True, enc_padding_mask=None)
         #print("model", model)
         logits, loss, acc = model(S, Q)
-        #loss = loss_function(y, logits)
+        #loss = loss_object(y_true=y_true, y_pred=logits)
     #print(acc)
     gradients = tape.gradient(loss, model.trainable_variables)
+    #print("gradients", gradients)
     #print("grad", gradients)
     #print('trainable variable', model.trainable_variables)
     #print("opt learning rate", optimizer.learning_rate)
@@ -92,7 +96,7 @@ def train_step(model, optimizer, S, Q, epoch):
     train_loss(loss)
     #return acc
     train_accuracy(acc)
-'''
+
 n_way_eval = 5
 n_shot_eval = 5
 n_query_eval = 15
@@ -119,6 +123,9 @@ if __name__ == "__main__":
     n_way_train = arg.n_way_train
     n_shot_train = arg.n_shot_train
     n_query_train = 15
+
+    y_true = tf.reshape(tf.tile(tf.expand_dims(tf.range(n_way_train), 1), [1, n_query_train]), [-1])
+    y_true = tf.one_hot(y_true, depth=n_way_train)
 
 
     if arg.dataset == "mini-ImageNet":
@@ -226,7 +233,8 @@ if __name__ == "__main__":
             # inp -> portuguese, tar -> english
             data = train_generator[episode]
             #print("data[0].shape", data[0].shape)
-            dual_train_step(model, FeatEnc_optimizer, RelMod_optimizer, data[0], data[1], epoch=eph)
+            #dual_train_step(model, FeatEnc_optimizer, RelMod_optimizer, data[0], data[1], epoch=eph)
+            train_step(model, FeatEnc_optimizer, data[1], data[0], eph, y_true)
             if (episode + 1) % log_every_n_samples == 0:
                 # print(ls, ac)
 
@@ -238,7 +246,7 @@ if __name__ == "__main__":
         if (eph + 1) % log_every_n_epochs == 0:
             for episode in range(200):
                 test_data = test_generator[episode]
-                _, _, acc = model(test_data[0], test_data[1])
+                _, _, acc = model(test_data[1], test_data[0])
                 #print("test acc", acc)
                 accs.append(acc)
             print("mean acc", np.mean(accs))
@@ -256,7 +264,7 @@ if __name__ == "__main__":
     for episode in range(arg.n_test_episodes):
 
         test_data = test_generator[episode]
-        _, _, acc = model(test_data[0], test_data[1])
+        _, _, acc = model(test_data[1], test_data[0])
         #print("test acc", acc)
         accs.append(acc)
     print("final mean acc shot %d"%(n_shot_train), np.mean(accs))
@@ -264,7 +272,7 @@ if __name__ == "__main__":
     accs = []
     for episode in range(arg.n_test_episodes):
         test_data = test_generator1[episode]
-        _, _, acc = model(test_data[0], test_data[1])
+        _, _, acc = model(test_data[1], test_data[0])
         # print("test acc", acc)
         accs.append(acc)
     print("final mean acc shot %d"%(another_shot), np.mean(accs))
