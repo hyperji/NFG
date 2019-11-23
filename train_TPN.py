@@ -13,7 +13,9 @@ import argparse
 from sklearn.preprocessing import LabelEncoder
 import os
 import glob
-print("11:23,  14:15")
+import gc
+
+print("11:24,  02:06, employed gc to clear the garbage")
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -52,45 +54,31 @@ train_loss = tf.keras.metrics.Mean(name='train_loss')
 train_accuracy = tf.keras.metrics.Mean(name='train_accuracy')
 
 @tf.function
-def dual_train_step(model, FeatEncOpt, RelModOpt, S, Q, epoch):
-    initial_lr = 1e-3
-    lr = max(0.5 ** (epoch // 100) * initial_lr, 1e-5)
-    print("lr", lr)
-    FeatEncOpt.learning_rate = lr
-    RelModOpt.learning_rate = lr
-
+def dual_train_step(model, FeatEncOpt, RelModOpt, S, Q):
     with tf.GradientTape(persistent=True) as tape:
         FeatEncLoss, RelModLoss, acc = model(S, Q)
-    FeatEncGrads = tape.gradient(FeatEncLoss, model.encoder.trainable_variables)
-    RelModGrads = tape.gradient(RelModLoss, model.relation.trainable_variables)
+    #FeatEncGrads = tape.gradient(FeatEncLoss, model.encoder.trainable_variables)
+    #RelModGrads = tape.gradient(RelModLoss, model.relation.trainable_variables)
+    gradients = tape.gradient(RelModLoss, model.trainable_variables)
 
-    FeatEncOpt.apply_gradients(zip(FeatEncGrads, model.encoder.trainable_variables))
-    RelModOpt.apply_gradients(zip(RelModGrads, model.relation.trainable_variables))
+    RelModOpt.apply_gradients(zip(gradients, model.trainable_variables))
+
+    #FeatEncOpt.apply_gradients(zip(FeatEncGrads, model.encoder.trainable_variables))
+    #RelModOpt.apply_gradients(zip(RelModGrads, model.relation.trainable_variables))
     train_loss(RelModLoss)
     # return acc
     train_accuracy(acc)
 
 @tf.function
-def train_step(model, optimizer, S, Q, epoch, y_true):
+def train_step(model, optimizer, S, Q):
     # tar_inp = tar[:, :-1]
     # tar_real = tar[:, 1:]
-    initial_lr = 1e-3
-    lr = max(0.5**(epoch//100)*initial_lr, 1e-5)
-    print("lr no dual training", lr)
-    optimizer.learning_rate = lr
-
     with tf.GradientTape() as tape:
-        #logits = model(X, training = True, enc_padding_mask=None)
-        #logits = model(X, training=True, enc_padding_mask=None)
-        #print("model", model)
-        logits, loss, acc = model(S, Q)
+        _, loss, acc = model(S, Q)
         #loss = loss_object(y_true=y_true, y_pred=logits)
     #print(acc)
     gradients = tape.gradient(loss, model.trainable_variables)
-    #print("gradients", gradients)
-    #print("grad", gradients)
-    #print('trainable variable', model.trainable_variables)
-    #print("opt learning rate", optimizer.learning_rate)
+
     optimizer.apply_gradients(zip(gradients, model.trainable_variables))
 
     train_loss(loss)
@@ -124,8 +112,8 @@ if __name__ == "__main__":
     n_shot_train = arg.n_shot_train
     n_query_train = 15
 
-    y_true = tf.reshape(tf.tile(tf.expand_dims(tf.range(n_way_train), 1), [1, n_query_train]), [-1])
-    y_true = tf.one_hot(y_true, depth=n_way_train)
+    #y_true = tf.reshape(tf.tile(tf.expand_dims(tf.range(n_way_train), 1), [1, n_query_train]), [-1])
+    #y_true = tf.one_hot(y_true, depth=n_way_train)
 
 
     if arg.dataset == "mini-ImageNet":
@@ -204,7 +192,7 @@ if __name__ == "__main__":
 
 
     if arg.method == 'CNN_TPN':
-        model = CNN_TPN(h_dim, z_dim, rn=300, k=20, alpha=0.99)
+        model = CNN_TPN_stop_grad(h_dim, z_dim, rn=300, k=20, alpha=0.99)
     elif arg.method == 'NFG_TPN':
         raise NotImplementedError
     else:
@@ -225,16 +213,22 @@ if __name__ == "__main__":
 
     FeatEnc_optimizer = tf.keras.optimizers.Adam()
     RelMod_optimizer = tf.keras.optimizers.Adam()
+    initial_lr = 1e-3
 
     for eph in range(latest_version, n_epochs+latest_version):
+        lr = max(0.5 ** (eph // 100) * initial_lr, 1e-5)
+        FeatEnc_optimizer.learning_rate = lr
+        #print("lr no dual training", lr)
+        print("lr", lr)
+        RelMod_optimizer.learning_rate = lr
         for episode in range(n_episodes):
             train_loss.reset_states()
             train_accuracy.reset_states()
             # inp -> portuguese, tar -> english
             data = train_generator[episode]
             #print("data[0].shape", data[0].shape)
-            #dual_train_step(model, FeatEnc_optimizer, RelMod_optimizer, data[1], data[0], epoch=eph)
-            train_step(model, FeatEnc_optimizer, data[1], data[0], eph, y_true)
+            dual_train_step(model, FeatEnc_optimizer, RelMod_optimizer, data[1], data[0])
+            #train_step(model, FeatEnc_optimizer, data[1], data[0])
             if (episode + 1) % log_every_n_samples == 0:
                 # print(ls, ac)
 
@@ -244,12 +238,14 @@ if __name__ == "__main__":
                                                                                            train_accuracy.result()))
         accs = []
         if (eph + 1) % log_every_n_epochs == 0:
+            gc.collect()
             for episode in range(200):
                 test_data = test_generator[episode]
                 _, _, acc = model(test_data[1], test_data[0])
                 #print("test acc", acc)
                 accs.append(acc)
             print("mean acc", np.mean(accs))
+            """
             save_name = arg.dataset + "_" + arg.method + "_" + str(arg.n_way_train) + "_" + str(
                 arg.n_shot_train) + "_" + str(eph)
             save_dir_path = os.path.join(arg.ckpt, save_name)
@@ -258,6 +254,7 @@ if __name__ == "__main__":
                 os.makedirs(save_dir_path)
 
             model.save_weights(os.path.join(save_dir_path, save_name))
+            """
 
 
     accs = []
