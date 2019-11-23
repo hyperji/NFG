@@ -7,7 +7,7 @@
 import tensorflow as tf
 from NFG_lite import NFG4img, Aggregator
 import numpy as np
-print("meta learning.py, 11:21 22:50, and 0.01 inits div, 0.1~10, changed episoid ")
+print("meta learning.py, NFG comming 11:23 14:15")
 
 class conv_block_v2(tf.keras.layers.Layer):
     def __init__(self, out_channels, conv_padding = "SAME", pooling_padding = "VALID"):
@@ -325,10 +325,50 @@ class CNNEncoder4TPN(tf.keras.layers.Layer):
 
     def call(self, x):
         x_ = self.conv1(x)
+        print("X", x_.shape)
         x_ = self.conv2(x_)
+        print("X", x_.shape)
         x_ = self.conv3(x_)
+        print("X", x_.shape)
         x_ = self.conv4(x_)
+        print("X", x_.shape)
         x_ = self.flatten(x_)
+        return x_
+
+class NFGEncoder4TPN(tf.keras.layers.Layer):
+    def __init__(self, h_dim, z_dim):
+        super(NFGEncoder4TPN, self).__init__()
+        self.nfg1 = NFGEncoder(
+            ksize=3, strides=2, d_neuron=h_dim, dk=8, dv=h_dim, Nh=8, dact=8, final_dim=h_dim, padding='SAME')
+        self.nfg2 = NFGEncoder(
+            ksize=3, strides=2, d_neuron=h_dim, dk=8, dv=h_dim, Nh=8, dact=8, final_dim=h_dim, padding='SAME')
+        self.nfg3 = NFGEncoder(
+            ksize=3, strides=2, d_neuron=h_dim, dk=8, dv=h_dim, Nh=8, dact=8, final_dim=h_dim, padding='SAME')
+        self.nfg4 = NFGEncoder(
+            ksize=3, strides=2, d_neuron=z_dim, dk=8, dv=z_dim, Nh=8, dact=8, final_dim=z_dim, padding='VALID')
+        self.agg3 = Aggregator(ksize=3, strides=1, padding="SAME")
+        self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
+        self.flatten = tf.keras.layers.Flatten()
+
+    def call(self, x):
+        x_ = self.agg3(x)
+        x_ = self.nfg1(x_)
+        #print("X", x_.shape)
+
+        x_ = self.agg2(x_)
+        x_ = self.nfg2(x_)
+        #print("X", x_.shape)
+
+        x_ = self.agg2(x_)
+        x_ = self.nfg3(x_)
+        #print("X", x_.shape)
+
+        x_ = self.agg2(x_)
+        x_ = self.nfg4(x_)
+        #print("X", x_.shape)
+
+        x_ = self.flatten(x_)
+
         return x_
 
 class RelationModule4TPN(tf.keras.layers.Layer):
@@ -337,7 +377,7 @@ class RelationModule4TPN(tf.keras.layers.Layer):
         self.conv1 = conv_block_v2(h_dim, pooling_padding="SAME")
         self.conv2 = conv_block_v2(1, pooling_padding="SAME")
         self.fc1 = tf.keras.layers.Dense(8, activation=tf.nn.relu, use_bias=True)
-        self.fc2 = tf.keras.layers.Dense(1, activation=None, use_bias=True)
+        self.fc2 = tf.keras.layers.Dense(1, activation=tf.sigmoid, use_bias=True)
         self.flatten = tf.keras.layers.Flatten()
 
     def call(self, x):
@@ -362,17 +402,15 @@ class CNN_TPN_stop_grad(tf.keras.Model):
         self.rn = rn
         self.k = k
         self.alpha = alpha
-        self.encoder = CNNEncoder4TPN(h_dim, z_dim)
+        self.encoder = NFGEncoder4TPN(h_dim, z_dim)#CNNEncoder4TPN(h_dim, z_dim)
         self.relation = RelationModule4TPN(h_dim)
         if self.rn==300:       # learned sigma, fixed alpha
             self.alpha = tf.constant(self.alpha)
         else:                          # learned sigma and alpha
             self.alpha = tf.Variable(self.alpha, name='alpha')
-        self.loss_func = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
-        self.epsilon = tf.keras.backend.epsilon()
 
 
-    def call(self, s, q):
+    def call(self, q, s):
         s_shape = s.shape
         q_shape = q.shape
         num_classes, num_support = s_shape[0], s_shape[1]
@@ -422,12 +460,13 @@ class CNN_TPN_stop_grad(tf.keras.Model):
     def label_prop(self, x, u, ys):
 
         # x: NxD, u: UxD
+        epsilon = np.finfo(float).eps
         s = tf.shape(ys)
         ys = tf.reshape(ys, (s[0] * s[1], -1))
         Ns, C = tf.shape(ys)[0], tf.shape(ys)[1]
         Nu = tf.shape(u)[0]
 
-        yu = tf.zeros((Nu, C)) / tf.cast(C, tf.float32) + self.epsilon  # 0 initialization
+        yu = tf.zeros((Nu, C)) / tf.cast(C, tf.float32) + epsilon  # 0 initialization
         # yu = tf.ones((Nu,C))/tf.cast(C,tf.float32)            # 1/C initialization
         y = tf.concat([ys, yu], axis=0)
         gt = tf.reshape(tf.tile(tf.expand_dims(tf.range(C), 1), [1, tf.cast(Nu / C, tf.int32)]), [-1])
@@ -439,8 +478,9 @@ class CNN_TPN_stop_grad(tf.keras.Model):
         # compute graph weights
         if self.rn in [30, 300]:  # compute example-wise sigma
             self.sigma = self.relation(all_un)
+            #print(tf.reduce_min(self.sigma), tf.reduce_max(self.sigma), tf.reduce_mean(self.sigma))
 
-            all_un = all_un / (self.sigma + self.epsilon)
+            all_un = all_un / (self.sigma + epsilon)
             all1 = tf.expand_dims(all_un, axis=0)
             all2 = tf.expand_dims(all_un, axis=1)
             W = tf.reduce_mean(tf.square(all1 - all2), axis=2)
@@ -452,14 +492,14 @@ class CNN_TPN_stop_grad(tf.keras.Model):
 
         # Laplacian norm
         D = tf.reduce_sum(W, axis=0)
-        D_inv = 1.0 / (D + self.epsilon)
+        D_inv = 1.0 / (D + epsilon)
         D_sqrt_inv = tf.sqrt(D_inv)
 
         # compute propagated label
         D1 = tf.expand_dims(D_sqrt_inv, axis=1)
         D2 = tf.expand_dims(D_sqrt_inv, axis=0)
         S = D1 * W * D2
-        F = tf.linalg.inv(tf.eye(N) - self.alpha * S + self.epsilon)
+        F = tf.linalg.inv(tf.eye(N) - self.alpha * S + epsilon)
         F = tf.matmul(F, y)
         label = tf.argmax(F, axis=1)
 
@@ -469,13 +509,9 @@ class CNN_TPN_stop_grad(tf.keras.Model):
         y_one_hot = tf.reshape(tf.one_hot(gt, depth=C), [Nu, -1])
         y_one_hot = tf.concat([ys, y_one_hot], axis=0)
 
-        ce_loss = self.loss_func(y_pred=F, y_true=y_one_hot)
-        print("ce_loss", ce_loss.shape)
-        '''
-        ce_loss = y_one_hot * tf.math.log(F + self.epsilon)
+        ce_loss = y_one_hot * tf.math.log(F + epsilon)
         ce_loss = tf.negative(ce_loss)
         ce_loss = tf.reduce_mean(tf.reduce_sum(ce_loss, axis=1))
-        '''
 
         # only consider query examples acc
         F_un = F[Ns:, :]
@@ -513,21 +549,12 @@ class CNN_TPN(tf.keras.Model):
         self.rn = rn
         self.k = k
         self.alpha = alpha
-        self.encoder = CNNEncoder4TPN(h_dim, z_dim)
+        self.encoder = NFGEncoder4TPN(h_dim, z_dim)#CNNEncoder4TPN(h_dim, z_dim)
         self.relation = RelationModule4TPN(h_dim)
         if self.rn==300:       # learned sigma, fixed alpha
             self.alpha = tf.constant(self.alpha)
         else:                          # learned sigma and alpha
             self.alpha = tf.Variable(self.alpha, name='alpha')
-
-
-    def build(self, input_shape):
-        num_classes, num_queries = input_shape[0], input_shape[1]
-        #self.yu = tf.ones((num_classes*num_queries,num_classes))/tf.cast(1000,tf.float32)
-        self.yu = tf.zeros((num_classes*num_queries, num_classes)) + 1e-2
-        self.gt = tf.reshape(
-            tf.tile(tf.expand_dims(tf.range(num_classes), 1), [1, tf.cast(num_queries, tf.int32)]), [-1])
-        self.y_one_hot = tf.reshape(tf.one_hot(self.gt, depth=num_classes), [num_classes*num_queries, -1])
 
 
     def call(self, q, s):
@@ -553,30 +580,31 @@ class CNN_TPN(tf.keras.Model):
 
     def label_prop(self, x, u, ys):
 
-        # x: NxD, u: UxD
         epsilon = np.finfo(float).eps
+        # x: NxD, u: UxD
         s = tf.shape(ys)
         ys = tf.reshape(ys, (s[0] * s[1], -1))
-        Ns, C = ys.shape[0], ys.shape[1]
-        Nu = u.shape[0]
+        Ns, C = tf.shape(ys)[0], tf.shape(ys)[1]
+        Nu = tf.shape(u)[0]
 
-        y = tf.concat([ys, self.yu], axis=0)
+        yu = tf.zeros((Nu, C)) / tf.cast(C, tf.float32) + epsilon # 0 initialization
+        #yu = tf.ones((Nu,C))/tf.cast(C,tf.float32)            # 1/C initialization
+        y = tf.concat([ys, yu], axis=0)
+        gt = tf.reshape(tf.tile(tf.expand_dims(tf.range(C), 1), [1, tf.cast(Nu / C, tf.int32)]), [-1])
 
-        all_un = tf.concat([x, u], axis=0)
+        all_un = tf.concat([x, u], 0)
         all_un = tf.reshape(all_un, [-1, 1600])
         N, d = tf.shape(all_un)[0], tf.shape(all_un)[1]
 
         # compute graph weights
         if self.rn in [30, 300]:  # compute example-wise sigma
             self.sigma = self.relation(all_un)
-            self.sigma = tf.clip_by_value(self.sigma, 0.1, 10)
+            #print(tf.reduce_min(self.sigma), tf.reduce_max(self.sigma), tf.reduce_mean(self.sigma))
 
-            #print("sigma", self.sigma.shape)
-
-            all_un = all_un / self.sigma
-            #all_un = tf.multiply(all_un, self.sigma)
-            W = euclidean_distance(all_un, all_un)
-            #print("W", W.shape)
+            all_un = all_un / (self.sigma + epsilon)
+            all1 = tf.expand_dims(all_un, axis=0)
+            all2 = tf.expand_dims(all_un, axis=1)
+            W = tf.reduce_mean(tf.square(all1 - all2), axis=2)
             W = tf.exp(-W / 2)
 
         # kNN Graph
@@ -594,39 +622,35 @@ class CNN_TPN(tf.keras.Model):
         S = D1 * W * D2
         F = tf.linalg.inv(tf.eye(N) - self.alpha * S + epsilon)
         F = tf.matmul(F, y)
-        label = tf.argmax(F, axis=1)
+        label = tf.argmax(F, 1)
 
         # loss computation
         F = tf.nn.softmax(F)
 
-        #y_one_hot = tf.reshape(tf.one_hot(self.gt, depth=C), [Nu, -1])
-
-        y_one_hot = tf.concat([ys, self.y_one_hot], axis=0)
+        y_one_hot = tf.reshape(tf.one_hot(gt, depth=C), [Nu, -1])
+        y_one_hot = tf.concat([ys, y_one_hot], axis=0)
 
         ce_loss = y_one_hot * tf.math.log(F + epsilon)
         ce_loss = tf.negative(ce_loss)
-        ce_loss = tf.reduce_mean(tf.reduce_sum(ce_loss, axis=1))
+        ce_loss = tf.reduce_mean(tf.reduce_sum(ce_loss, 1))
 
         # only consider query examples acc
         F_un = F[Ns:, :]
-        acc = tf.reduce_mean(tf.cast(tf.equal(label[Ns:], tf.cast(self.gt, tf.int64)), tf.float32))
+        acc = tf.reduce_mean(tf.cast(tf.equal(label[Ns:], tf.cast(gt, tf.int64)), tf.float32))
 
         return ce_loss, acc, self.sigma
 
     def topk(self, W, k):
         # construct k-NN and compute margin loss
         values, indices = tf.nn.top_k(W, k, sorted=False)
-        my_range = tf.expand_dims(tf.range(0, tf.shape(indices)[0]), axis=1)
+        my_range = tf.expand_dims(tf.range(0, tf.shape(indices)[0]), 1)
         my_range_repeated = tf.tile(my_range, [1, k])
-        full_indices = tf.concat([tf.expand_dims(my_range_repeated, axis=2), tf.expand_dims(indices, 2)], axis=2)
+        full_indices = tf.concat([tf.expand_dims(my_range_repeated, 2), tf.expand_dims(indices, 2)], axis=2)
         full_indices = tf.reshape(full_indices, [-1, 2])
         full_indices = tf.cast(full_indices, tf.int64)
         sparse_w = tf.sparse.SparseTensor(
             indices=full_indices, values=tf.reshape(values, [-1]), dense_shape=W.shape)
         topk_W = tf.sparse.to_dense(sparse_w, default_value=0, validate_indices=False)
-
-        #topk_W = tf.compat.v1.sparse_to_dense(full_indices, tf.shape(W), tf.reshape(values, [-1]), default_value=0.,
-        #                            validate_indices=False)
         ind1 = (topk_W > 0) | (tf.transpose(topk_W) > 0)  # union, k-nearest neighbor
         ind2 = (topk_W > 0) & (tf.transpose(topk_W) > 0)  # intersection, mutal k-nearest neighbor
         ind1 = tf.cast(ind1, tf.float32)

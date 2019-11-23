@@ -13,14 +13,14 @@ import argparse
 from sklearn.preprocessing import LabelEncoder
 import os
 import glob
-print("11:21,  16:30")
+print("11:23,  14:15")
 
 def get_args():
     parser = argparse.ArgumentParser()
     # 添加参数
     parser.add_argument('--n_epochs', type=int, default=400, help='n_epochs')
     parser.add_argument("--log_every_n_samples", type=int, default=100)
-    parser.add_argument("--log_every_n_epochs", type=int, default=50)
+    parser.add_argument("--log_every_n_epochs", type=int, default=10)
     parser.add_argument("--ckpt", type=str, default="models")
     parser.add_argument("--start_learning_rate", type=float, default=1e-4)
     parser.add_argument("--dataset", type=str, default="mini-ImageNet") # or "CUB"
@@ -76,7 +76,7 @@ def train_step(model, optimizer, S, Q, epoch, y_true):
     # tar_real = tar[:, 1:]
     initial_lr = 1e-3
     lr = max(0.5**(epoch//100)*initial_lr, 1e-5)
-    print("lr", lr)
+    print("lr no dual training", lr)
     optimizer.learning_rate = lr
 
     with tf.GradientTape() as tape:
@@ -233,7 +233,7 @@ if __name__ == "__main__":
             # inp -> portuguese, tar -> english
             data = train_generator[episode]
             #print("data[0].shape", data[0].shape)
-            #dual_train_step(model, FeatEnc_optimizer, RelMod_optimizer, data[0], data[1], epoch=eph)
+            #dual_train_step(model, FeatEnc_optimizer, RelMod_optimizer, data[1], data[0], epoch=eph)
             train_step(model, FeatEnc_optimizer, data[1], data[0], eph, y_true)
             if (episode + 1) % log_every_n_samples == 0:
                 # print(ls, ac)
