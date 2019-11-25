@@ -15,7 +15,7 @@ import os
 import glob
 import gc
 
-print("11:24,  02:06, employed gc to clear the garbage")
+print("11:25,  18:37, employed gc to clear the garbage")
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -33,6 +33,9 @@ def get_args():
     parser.add_argument("--n_train_episodes", type=int, default=100)
     parser.add_argument("--n_test_episodes", type=int, default=500)
     parser.add_argument("--restore", type=bool, default=False)
+    parser.add_argument("--rn", type=int, default=300)
+    parser.add_argument("--k", type=int, default=20)
+    parser.add_argument("--alpha", type=float, default=0.99)
 
     # 如: python xx.py --foo hello  > hello
     args = parser.parse_args()
@@ -192,7 +195,7 @@ if __name__ == "__main__":
 
 
     if arg.method == 'CNN_TPN':
-        model = CNN_TPN_stop_grad(h_dim, z_dim, rn=300, k=20, alpha=0.99)
+        model = CNN_TPN_stop_grad(h_dim, z_dim, rn=arg.rn, k=arg.k, alpha=arg.alpha)
     elif arg.method == 'NFG_TPN':
         raise NotImplementedError
     else:

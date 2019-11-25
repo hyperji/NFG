@@ -7,7 +7,8 @@
 import tensorflow as tf
 from NFG_lite import NFG4img, Aggregator
 import numpy as np
-print("meta learning.py, pure NFG 11:24 02:14, tf.identity, sigma multiply, 1/c init, waiting to examization :-)")
+from StandAlongSelfAtten import SASA
+print("meta learning.py, pure nfg 11:25 21:11, without relmod, 1/c init, update topk func")
 
 class conv_block_v2(tf.keras.layers.Layer):
     def __init__(self, out_channels, conv_padding = "SAME", pooling_padding = "VALID"):
@@ -85,6 +86,15 @@ class NFGEncoder(tf.keras.layers.Layer):
         x = self.ln(x)
         return x
 
+class SASAEncoder(tf.keras.layers.Layer):
+    def __init__(self, ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding='SAME'):
+        super(SASAEncoder, self).__init__()
+        self.sasa = SASA(ksize, strides, dk, dv, Nh, final_dim, padding='SAME')
+        self.ln = tf.keras.layers.LayerNormalization()
+    def call(self, x):
+        x = self.sasa(x)
+        x = self.ln(x)
+        return x
 
 class NFGEncoder4RelNet(tf.keras.layers.Layer):
     def __init__(self, hidden_dim, final_dim):
@@ -377,10 +387,9 @@ class NFGRelationModule4TPN(tf.keras.layers.Layer):
         super(NFGRelationModule4TPN, self).__init__()
         self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
         self.nfg1 = NFGEncoder(ksize=3, strides=2, d_neuron=h_dim, dk=8, dv=h_dim, Nh=8, dact=8, final_dim=h_dim, padding='SAME')
-        #self.conv = conv_block_v2(1, pooling_padding="SAME")
         self.nfg2 = NFGEncoder(ksize=3, strides=2, d_neuron=16, dk=2, dv=16, Nh=2, dact=2, final_dim=16, padding="VALID")
         self.fc1 = tf.keras.layers.Dense(8, activation=tf.nn.relu, use_bias=True)
-        self.fc2 = tf.keras.layers.Dense(1, activation=tf.identity, use_bias=True)
+        self.fc2 = tf.keras.layers.Dense(1, activation=tf.sigmoid, use_bias=False)
         self.flatten = tf.keras.layers.Flatten()
 
     def call(self, x):
@@ -404,7 +413,7 @@ class RelationModule4TPN(tf.keras.layers.Layer):
     def __init__(self, h_dim):
         super(RelationModule4TPN, self).__init__()
         self.conv1 = conv_block_v2(h_dim, pooling_padding="SAME")
-        self.conv2 = conv_block_v2(1, pooling_padding="SAME")
+        self.conv2 = conv_block_v2(16, pooling_padding="VALID")
         self.fc1 = tf.keras.layers.Dense(8, activation=tf.nn.relu, use_bias=True)
         self.fc2 = tf.keras.layers.Dense(1, activation=tf.sigmoid, use_bias=True)
         self.flatten = tf.keras.layers.Flatten()
@@ -414,7 +423,7 @@ class RelationModule4TPN(tf.keras.layers.Layer):
         net = self.conv1(net)
         net = self.conv2(net)
 
-        print("net after conv2", net.shape)
+        #print("net after conv2", net.shape)
 
         net = self.flatten(net)
 
@@ -434,7 +443,7 @@ class CNN_TPN_stop_grad(tf.keras.Model):
         self.k = k
         self.alpha = alpha
         self.encoder = NFGEncoder4TPN(h_dim, z_dim)#CNNEncoder4TPN(h_dim, z_dim)
-        self.relation = NFGRelationModule4TPN(h_dim)#RelationModule4TPN(h_dim)
+        #self.relation = RelationModule4TPN(h_dim)#NFGRelationModule4TPN(h_dim)#RelationModule4TPN(h_dim)
         if self.rn==300:       # learned sigma, fixed alpha
             self.alpha = tf.constant(self.alpha)
         else:                          # learned sigma and alpha
@@ -485,7 +494,7 @@ class CNN_TPN_stop_grad(tf.keras.Model):
 
         ###############################################################################################
         #TODO originally this is no stop gradient in original paper
-        ce_loss, acc, sigma_value = self.label_prop(tf.stop_gradient(emb_s), tf.stop_gradient(emb_q), ys_one_hot)
+        #ce_loss, acc, sigma_value = self.label_prop(tf.stop_gradient(emb_s), tf.stop_gradient(emb_q), ys_one_hot)
         '''
         ce_loss, acc, sigma_value = self.label_prop(emb_s, emb_q, ys_one_hot)
         return sigma_value, ce_loss, acc
@@ -511,11 +520,10 @@ class CNN_TPN_stop_grad(tf.keras.Model):
 
         # compute graph weights
         if self.rn in [30, 300]:  # compute example-wise sigma
-            self.sigma = self.relation(all_un)
-            #print(tf.reduce_min(self.sigma), tf.reduce_max(self.sigma), tf.reduce_mean(self.sigma))
+            self.sigma = 0#self.relation(all_un)
 
             #all_un = all_un / (self.sigma + epsilon)
-            all_un = all_un * self.sigma
+            #all_un = all_un * self.sigma
             all1 = tf.expand_dims(all_un, axis=0)
             all2 = tf.expand_dims(all_un, axis=1)
             W = tf.reduce_mean(tf.square(all1 - all2), axis=2)
@@ -568,11 +576,11 @@ class CNN_TPN_stop_grad(tf.keras.Model):
 
         #topk_W = tf.compat.v1.sparse_to_dense(full_indices, tf.shape(W), tf.reshape(values, [-1]), default_value=0.,
         #                            validate_indices=False)
-        ind1 = (topk_W > 0) | (tf.transpose(topk_W) > 0)  # union, k-nearest neighbor
-        ind2 = (topk_W > 0) & (tf.transpose(topk_W) > 0)  # intersection, mutal k-nearest neighbor
-        ind1 = tf.cast(ind1, tf.float32)
+        #ind1 = (topk_W > 0) | (tf.transpose(topk_W) > 0)  # union, k-nearest neighbor
+        #ind2 = (topk_W > 0) & (tf.transpose(topk_W) > 0)  # intersection, mutal k-nearest neighbor
+        #ind1 = tf.cast(ind1, tf.float32)
 
-        topk_W = ind1 * W
+        #topk_W = ind1 * W
 
         return topk_W
 
@@ -656,10 +664,10 @@ class CNN_TPN(tf.keras.Model):
 
         # compute graph weights
         if self.rn in [30, 300]:  # compute example-wise sigma
-            self.sigma = self.relation(all_un)
+            #self.sigma = self.relation(all_un)
             #print(tf.reduce_min(self.sigma), tf.reduce_max(self.sigma), tf.reduce_mean(self.sigma))
-
-            all_un = all_un / (self.sigma + self.epsilon)
+            self.sigma = 0
+            #all_un = all_un / (self.sigma + self.epsilon)
             all1 = tf.expand_dims(all_un, axis=0)
             all2 = tf.expand_dims(all_un, axis=1)
             W = tf.reduce_mean(tf.square(all1 - all2), axis=2)
@@ -724,10 +732,10 @@ class NFG_Prototypical_Nets(tf.keras.Model):
         super(NFG_Prototypical_Nets, self).__init__()
         self.agg3 = Aggregator(3, 1, padding="SAME")
         self.agg2 = Aggregator(2, 1, padding="SAME")
-        self.nfg1 = NFGEncoder(ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding="SAME")
-        self.nfg2 = NFGEncoder(ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding="SAME")
-        self.nfg3 = NFGEncoder(ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding="SAME")
-        self.nfg4 = NFGEncoder(ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding="VALID")
+        self.nfg1 = SASAEncoder(ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding="SAME")
+        self.nfg2 = SASAEncoder(ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding="SAME")
+        self.nfg3 = SASAEncoder(ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding="SAME")
+        self.nfg4 = SASAEncoder(ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding="VALID")
         self.flatten = tf.keras.layers.Flatten()
         self.ln = tf.keras.layers.LayerNormalization()
         self.loss_func = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
