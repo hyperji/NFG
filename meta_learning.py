@@ -8,7 +8,7 @@ import tensorflow as tf
 from NFG_lite import NFG4img, Aggregator
 import numpy as np
 from StandAlongSelfAtten import SASA
-print("meta learning.py, pure nfg 11:25 21:11, without relmod, 1/c init, update topk func")
+print("meta learning.py, pure nfg 00:37, without relmod, 0 init, no lals norm")
 
 class conv_block_v2(tf.keras.layers.Layer):
     def __init__(self, out_channels, conv_padding = "SAME", pooling_padding = "VALID"):
@@ -447,7 +447,7 @@ class CNN_TPN_stop_grad(tf.keras.Model):
         if self.rn==300:       # learned sigma, fixed alpha
             self.alpha = tf.constant(self.alpha)
         else:                          # learned sigma and alpha
-            self.alpha = tf.Variable(self.alpha, name='alpha')
+            self.alpha = tf.Variable(self.alpha, name='alpha', trainable=True)
 
 
     def call(self, q, s):
@@ -509,8 +509,8 @@ class CNN_TPN_stop_grad(tf.keras.Model):
         Ns, C = tf.shape(ys)[0], tf.shape(ys)[1]
         Nu = tf.shape(u)[0]
 
-        #yu = tf.zeros((Nu, C)) / tf.cast(C, tf.float32) + epsilon  # 0 initialization
-        yu = tf.ones((Nu,C))/tf.cast(C,tf.float32)            # 1/C initialization
+        yu = tf.zeros((Nu, C)) / tf.cast(C, tf.float32) + epsilon  # 0 initialization
+        #yu = tf.ones((Nu,C))/tf.cast(C,tf.float32)            # 1/C initialization
         y = tf.concat([ys, yu], axis=0)
         gt = tf.reshape(tf.tile(tf.expand_dims(tf.range(C), 1), [1, tf.cast(Nu / C, tf.int32)]), [-1])
 
@@ -527,13 +527,15 @@ class CNN_TPN_stop_grad(tf.keras.Model):
             all1 = tf.expand_dims(all_un, axis=0)
             all2 = tf.expand_dims(all_un, axis=1)
             W = tf.reduce_mean(tf.square(all1 - all2), axis=2)
-            W = tf.exp(-W / 2)
+            #W = tf.exp(-W / 2)
+            W = tf.nn.softmax(-W)
 
         # kNN Graph
         if self.k > 0:
             W = self.topk(W, self.k)
 
         # Laplacian norm
+        '''
         D = tf.reduce_sum(W, axis=0)
         D_inv = 1.0 / (D + epsilon)
         D_sqrt_inv = tf.sqrt(D_inv)
@@ -542,6 +544,8 @@ class CNN_TPN_stop_grad(tf.keras.Model):
         D1 = tf.expand_dims(D_sqrt_inv, axis=1)
         D2 = tf.expand_dims(D_sqrt_inv, axis=0)
         S = D1 * W * D2
+        '''
+        S = W
         F = tf.linalg.inv(tf.eye(N) - self.alpha * S + epsilon)
         F = tf.matmul(F, y)
         label = tf.argmax(F, axis=1)
@@ -576,11 +580,11 @@ class CNN_TPN_stop_grad(tf.keras.Model):
 
         #topk_W = tf.compat.v1.sparse_to_dense(full_indices, tf.shape(W), tf.reshape(values, [-1]), default_value=0.,
         #                            validate_indices=False)
-        #ind1 = (topk_W > 0) | (tf.transpose(topk_W) > 0)  # union, k-nearest neighbor
+        ind1 = (topk_W > 0) | (tf.transpose(topk_W) > 0)  # union, k-nearest neighbor
         #ind2 = (topk_W > 0) & (tf.transpose(topk_W) > 0)  # intersection, mutal k-nearest neighbor
-        #ind1 = tf.cast(ind1, tf.float32)
+        ind1 = tf.cast(ind1, tf.float32)
 
-        #topk_W = ind1 * W
+        topk_W = ind1 * W
 
         return topk_W
 

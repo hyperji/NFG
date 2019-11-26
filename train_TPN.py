@@ -34,7 +34,7 @@ def get_args():
     parser.add_argument("--n_test_episodes", type=int, default=500)
     parser.add_argument("--restore", type=bool, default=False)
     parser.add_argument("--rn", type=int, default=300)
-    parser.add_argument("--k", type=int, default=20)
+    parser.add_argument("--k", type=int, default=-1)
     parser.add_argument("--alpha", type=float, default=0.99)
 
     # 如: python xx.py --foo hello  > hello
