@@ -4,7 +4,7 @@
 # @FileName: NFG.py
 # @E-mail: hj@jimhe.cn
 
-print("NFG reforged")
+print("NFG reforged 12：34， 11：26")
 
 import tensorflow as tf
 from tensorflow.python.keras.utils import conv_utils
@@ -217,15 +217,13 @@ class NFG4img(tf.keras.layers.Layer):
         return v
 
 class NFG4img_v2(tf.keras.layers.Layer):
-    def __init__(self, ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding='SAME'):
+    def __init__(self, ksize, strides, d_neuron, dv, Nh, final_dim, padding='SAME'):
         """
         :param ksize: 窗口大小
         :param strides: 步长大小
         :param d_neuron: 神经元编码长度
-        :param dk: key depth
         :param dv: value depth
         :param Nh: num of head
-        :param dact: 激活量函数深度
         :param final_dim: final output dims
         :param padding: 是否padding 类型(和ＣＮＮ一样)
         """
@@ -237,24 +235,24 @@ class NFG4img_v2(tf.keras.layers.Layer):
                                                  initializer=tf.keras.initializers.glorot_uniform(),
                                                  trainable=True)
 
-        self.dkh = dk // Nh
+        self.dkh = 1
         self.dvh = dv // Nh
-        self.dacth = dact // Nh
+        self.dacth = 1
         self.Nh = Nh
 
-        self.wkq = tf.keras.layers.Dense(dk + dk, activation=None)
+        self.wkq = tf.keras.layers.Dense(Nh + Nh, activation=None)
 
 
         self.wv = tf.keras.layers.Dense(dv)
 
-        self.wgactq = tf.keras.layers.Dense(dact, activation=None)
-        self.wgactk = tf.keras.layers.Dense(dact, activation=None)
+        self.wgactq = tf.keras.layers.Dense(Nh, activation=None)
+        self.wgactk = tf.keras.layers.Dense(Nh, activation=None)
 
         self.n_neurons = ksize * ksize
         self.d_neuron = d_neuron
         self.dv = dv
-        self.dk = dk
-        self.dact = dact
+        self.dk = Nh
+        self.dact = Nh
 
         self.wf = tf.keras.layers.Dense(final_dim)
 
@@ -265,7 +263,6 @@ class NFG4img_v2(tf.keras.layers.Layer):
         self._strides = conv_utils.normalize_tuple(self.strides, 2, name="strides")
         self.padding = padding
         self._padding = conv_utils.normalize_padding(self.padding)
-        self.max_pool = tf.keras.layers.MaxPool1D(ksize**2)
 
     def split_heads_2d(self, inputs, Nh):
         """Split channels into multiple heads."""
@@ -291,8 +288,8 @@ class NFG4img_v2(tf.keras.layers.Layer):
         k, q = tf.split(kq, [self.dk, self.dk], axis=3)
 
         # print("k", k)
-        #k = self.split_heads_2d(k, Nh=self.Nh)
-        #q = self.split_heads_2d(q, Nh=self.Nh)
+        k = self.split_heads_2d(k, Nh=self.Nh)
+        q = self.split_heads_2d(q, Nh=self.Nh)
 
         flat_k = tf.reshape(k, [self.Nh, H * W, self.dkh])
         flat_q = tf.reshape(q, [self.Nh, H * W, self.dkh])
@@ -309,45 +306,18 @@ class NFG4img_v2(tf.keras.layers.Layer):
         H, W, _ = self.neuron_embeddings.shape
         _, vH, vW, _ = inps.shape
 
-        actk = self.wgactk(inps)
-        actq = self.wgactq(self.neuron_embeddings)
-        actq = tf.expand_dims(actq, axis=0)
-
-        actk = self.split_heads_2d(actk, Nh=self.Nh)
-        #print("actq1", actq.shape)
-        actq = self.split_heads_2d(actq, Nh=self.Nh)
-        #print("actq2", actq.shape)
-
-        flat_actk = tf.reshape(actk, [tf.shape(inps)[0], self.Nh, vH*vW, self.dacth])
-        flat_actq = tf.reshape(actq, [1, self.Nh, H*W, self.dacth])
-
-        #print("flat_actk", flat_actk.shape)
-        #print("flat_actq", flat_actq.shape)
-
-        #glogits = tf.matmul(flat_actq, flat_actk, transpose_b=True) # [128, 10, 9, 196]
-
-        glogits = flat_actq[:, :, -2:-1, :] + tf.transpose(flat_actk, [0, 1, 3, 2])
-        #print("glogits after matmul", glogits.shape)
-
-        #glogits = glogits[:, :, -2:-1, :] #选取最后一个神经元的激活量作为整个神经功能团的激活量
-        #print("glogits after slining", glogits.shape)
-
-        #glogits *= self.dacth ** -0.5
+        actk = self.wgactk(inps) #[128, 84, 84, 8]
+        actq = self.wgactq(self.neuron_embeddings) #[3, 3, 8]
+        actq = tf.expand_dims(actq, axis=0) #[1, 3, 3, 8]
+        glogits = actq[:, -2:-1, -2:-1, :] + actk #[128, 84, 84, 8]
 
         glogits = tf.nn.relu(glogits)
+        sum_glogits = tf.reduce_sum(glogits, axis=[1, 2], keepdims=True)
+        activations = (tf.cast(vH * vW, tf.float32) / (sum_glogits + 1e-6)) * glogits
 
-        sum_glogits = tf.reduce_sum(glogits, axis=-1, keepdims=True)
-        #print("sum_glogits", sum_glogits.shape)
-        activations = (tf.cast(vH*vW, tf.float32) / (sum_glogits + 1e-6)) * glogits
-        #print("activations with norm", activations.shape)
-
-        activations = tf.transpose(activations, [0, 1, 3, 2])
-        #gweights = tf.reshape(gweights, [tf.shape(inps)[0], self.Nh, vH, vW, H*W])
-        #print("activations after transpose", activations.shape)
-        #print("inps_shape", [tf.shape(inps)[0], self.Nh, vH, vW, 1])
-        activations = tf.reshape(activations, [tf.shape(inps)[0], self.Nh, vH, vW, 1])
-        #gweights = self.combine_heads_2d(gweights)
-        #print("#"*100)
+        activations = tf.expand_dims(activations, axis=-1)
+        activations = tf.tile(activations, [1, 1, 1, 1, self.dvh])
+        activations = tf.reshape(activations, [tf.shape(inps)[0], vH, vW, self.dv])
 
         return activations
 
@@ -369,7 +339,7 @@ class NFG4img_v2(tf.keras.layers.Layer):
                               [self.final_dim])
 
     def get_config(self):
-        base_config = super(NFG4img, self).get_config()
+        base_config = super(NFG4img_v2, self).get_config()
         #base_config['output_dim'] = self.output_dim
         return base_config
 
@@ -390,12 +360,10 @@ class NFG4img_v2(tf.keras.layers.Layer):
         neural_structures = self.compute_neural_structures() #计算神经结构矩阵
         neural_structures = tf.expand_dims(neural_structures, axis=0)
         activation_amounts = self.compute_activation_amounts(inps) #计算激活量
-        v = self.wv(inps)
+        v = self.wv(inps) #[128, 84, 84, 64]
         #print("v after wv", v.shape)
 
-        v = self.split_heads_2d(v, Nh=self.Nh)
         v = tf.multiply(v, activation_amounts)
-        v = self.combine_heads_2d(v)
 
         v = tf.image.extract_patches(
             images=v, sizes=[1, self.ksize, self.ksize, 1], padding=self.padding,
@@ -404,15 +372,14 @@ class NFG4img_v2(tf.keras.layers.Layer):
 
         new_H = v.shape[1]
         new_W = v.shape[2]
-        #v = tf.reshape(v, [batch_size, new_H, new_W, self.ksize ** 2, self.dv])
-        v = tf.reshape(v, [batch_size * new_H * new_W, self.ksize ** 2, 1, self.dv])
-        v = self.split_heads_2d(v, Nh=self.Nh)
-        v = tf.reshape(v, [batch_size * new_H * new_W, self.Nh, self.ksize ** 2, self.dvh])
+        v = tf.reshape(v, [batch_size*new_H*new_W, self.ksize ** 2, self.dv])#[128*H*W, 9, 64]
 
-        neural_structures = neural_structures[:, :, 0:1, :]#以最后一个神经元的输出作为输出
-        neural_structures = tf.transpose(neural_structures, [0, 1, 3, 2])
+        neural_structures = neural_structures[:, :, 0:1, :]#以最后一个神经元的输出作为输出[1, 8, 1, 9]
+        neural_structures = tf.transpose(neural_structures, [0, 3, 1, 2]) #[1, 9, 8, 1]
+        neural_structures = tf.tile(neural_structures, [1, 1, 1, self.dvh])
+        neural_structures = tf.reshape(neural_structures, [1, self.ksize**2, self.dv])
 
-        v = tf.reduce_sum(tf.multiply(neural_structures, v), axis=2) #用神经结构左乘经过激活和变换后的输入
+        v = tf.reduce_sum(tf.multiply(neural_structures, v), axis=1) #用神经结构左乘经过激活和变换后的输入
 
         v = tf.reshape(v, [batch_size, new_H, new_W, self.dv])
 

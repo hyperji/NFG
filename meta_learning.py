@@ -5,10 +5,10 @@
 # @E-mail: hj@jimhe.cn
 
 import tensorflow as tf
-from NFG_lite import NFG4img, Aggregator
+from NFG_lite import Aggregator, NFG4img_v2, NFG4img
 import numpy as np
 from StandAlongSelfAtten import SASA
-print("meta learning.py, pure nfg 00:37, without relmod, 0 init, no lals norm")
+print("meta learning.py, all embrassing nfgv2, 14:22, sigmoid, celoss， let's see what will happpen if ksize is 3")
 
 class conv_block_v2(tf.keras.layers.Layer):
     def __init__(self, out_channels, conv_padding = "SAME", pooling_padding = "VALID"):
@@ -80,6 +80,18 @@ class NFGEncoder(tf.keras.layers.Layer):
     def __init__(self, ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding='SAME'):
         super(NFGEncoder, self).__init__()
         self.nfg = NFG4img(ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding)
+        self.ln = tf.keras.layers.LayerNormalization()
+    def call(self, x):
+        x = self.nfg(x)
+        x = self.ln(x)
+        return x
+
+
+class NFGEncoder_v2(tf.keras.layers.Layer):
+    def __init__(self, ksize, strides, d_neuron, dv, Nh, final_dim, padding='SAME'):
+        super(NFGEncoder_v2, self).__init__()
+        self.nfg = NFG4img_v2(
+            ksize=ksize, strides=strides, d_neuron=d_neuron, dv=dv, Nh=Nh, final_dim=final_dim, padding=padding)
         self.ln = tf.keras.layers.LayerNormalization()
     def call(self, x):
         x = self.nfg(x)
@@ -359,21 +371,61 @@ class NFGEncoder4TPN(tf.keras.layers.Layer):
         self.agg3 = Aggregator(ksize=3, strides=1, padding="SAME")
         self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
         self.flatten = tf.keras.layers.Flatten()
+        self.ln = tf.keras.layers.LayerNormalization()
 
     def call(self, x):
         x_ = self.agg3(x)
         x_ = self.nfg1(x_)
         #print("X", x_.shape)
 
-        x_ = self.agg2(x_)
+        #x_ = self.agg2(x_)
         x_ = self.nfg2(x_)
         #print("X", x_.shape)
 
-        x_ = self.agg2(x_)
+        #x_ = self.agg2(x_)
         x_ = self.nfg3(x_)
         #print("X", x_.shape)
 
-        x_ = self.agg2(x_)
+        #x_ = self.agg2(x_)
+        #x_ = self.ln(x_)
+        x_ = self.nfg4(x_)
+        #print("X", x_.shape)
+
+        x_ = self.flatten(x_)
+
+        return x_
+
+class NFGEncoder4TPN_v2(tf.keras.layers.Layer):
+    def __init__(self, h_dim, z_dim):
+        super(NFGEncoder4TPN_v2, self).__init__()
+        self.nfg1 = NFGEncoder_v2(
+            ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=8, final_dim=h_dim, padding='SAME')
+        self.nfg2 = NFGEncoder_v2(
+            ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=8, final_dim=h_dim, padding='SAME')
+        self.nfg3 = NFGEncoder_v2(
+            ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=8, final_dim=h_dim, padding='SAME')
+        self.nfg4 = NFGEncoder_v2(
+            ksize=3, strides=2, d_neuron=z_dim, dv=z_dim, Nh=8, final_dim=z_dim, padding='VALID')
+        self.agg3 = Aggregator(ksize=3, strides=1, padding="SAME")
+        self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
+        self.flatten = tf.keras.layers.Flatten()
+        self.ln = tf.keras.layers.LayerNormalization()
+
+    def call(self, x):
+        x_ = self.agg3(x)
+        x_ = self.nfg1(x_)
+        #print("X", x_.shape)
+
+        #x_ = self.agg2(x_)
+        x_ = self.nfg2(x_)
+        #print("X", x_.shape)
+
+        #x_ = self.agg2(x_)
+        x_ = self.nfg3(x_)
+        #print("X", x_.shape)
+
+        #x_ = self.agg2(x_)
+        #x_ = self.ln(x_)
         x_ = self.nfg4(x_)
         #print("X", x_.shape)
 
@@ -395,6 +447,33 @@ class NFGRelationModule4TPN(tf.keras.layers.Layer):
     def call(self, x):
         net = tf.reshape(x, [-1, 5, 5, 64])
         net = self.agg2(net)
+        net = self.nfg1(net)
+        #print("net after nfg1", net.shape)
+        net = self.nfg2(net)
+        #print("net after nfg2", net.shape)
+
+        net = self.flatten(net)
+
+        net = self.fc1(net)
+        net = self.fc2(net)
+
+        net = self.flatten(net)
+        return net
+
+
+class NFGRelationModule4TPN_v2(tf.keras.layers.Layer):
+    def __init__(self, h_dim):
+        super(NFGRelationModule4TPN_v2, self).__init__()
+        self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
+        self.nfg1 = NFGEncoder_v2(ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=8, final_dim=h_dim, padding='SAME')
+        self.nfg2 = NFGEncoder_v2(ksize=3, strides=2, d_neuron=16, dv=16, Nh=2, final_dim=16, padding="VALID")
+        self.fc1 = tf.keras.layers.Dense(8, activation=tf.nn.relu, use_bias=True)
+        self.fc2 = tf.keras.layers.Dense(1, activation=tf.sigmoid, use_bias=True)
+        self.flatten = tf.keras.layers.Flatten()
+
+    def call(self, x):
+        net = tf.reshape(x, [-1, 5, 5, 64])
+        #net = self.agg2(net)
         net = self.nfg1(net)
         #print("net after nfg1", net.shape)
         net = self.nfg2(net)
@@ -434,16 +513,28 @@ class RelationModule4TPN(tf.keras.layers.Layer):
         return net
 
 
-class CNN_TPN_stop_grad(tf.keras.Model):
-    def __init__(self, h_dim, z_dim, rn, k, alpha):
-        super(CNN_TPN_stop_grad, self).__init__()
+class TPN_stop_grad(tf.keras.Model):
+    def __init__(self, h_dim, z_dim, rn, k, alpha, encoder_type = "CNN", relation_type = 'NONE'):
+        super(TPN_stop_grad, self).__init__()
         self.h_dim = h_dim
         self.z_dim = z_dim
         self.rn = rn
         self.k = k
         self.alpha = alpha
-        self.encoder = NFGEncoder4TPN(h_dim, z_dim)#CNNEncoder4TPN(h_dim, z_dim)
-        #self.relation = RelationModule4TPN(h_dim)#NFGRelationModule4TPN(h_dim)#RelationModule4TPN(h_dim)
+        if encoder_type == "CNN":
+            self.encoder = CNNEncoder4TPN(h_dim, z_dim)
+        elif encoder_type == "NFG":
+            self.encoder = NFGEncoder4TPN_v2(h_dim, z_dim)#CNNEncoder4TPN(h_dim, z_dim)
+        else:
+            raise NotImplementedError
+        if relation_type == 'CNN':
+            self.relation = RelationModule4TPN(h_dim)
+        elif relation_type == "NFG":
+            self.relation = NFGRelationModule4TPN_v2(h_dim)
+        elif relation_type == "NONE":
+            self.relation = None
+        else:
+            raise NotImplementedError
         if self.rn==300:       # learned sigma, fixed alpha
             self.alpha = tf.constant(self.alpha)
         else:                          # learned sigma and alpha
@@ -520,22 +611,20 @@ class CNN_TPN_stop_grad(tf.keras.Model):
 
         # compute graph weights
         if self.rn in [30, 300]:  # compute example-wise sigma
-            self.sigma = 0#self.relation(all_un)
 
-            #all_un = all_un / (self.sigma + epsilon)
+            self.sigma = self.relation(all_un)
+            all_un = all_un / (self.sigma + epsilon)
             #all_un = all_un * self.sigma
             all1 = tf.expand_dims(all_un, axis=0)
             all2 = tf.expand_dims(all_un, axis=1)
             W = tf.reduce_mean(tf.square(all1 - all2), axis=2)
-            #W = tf.exp(-W / 2)
-            W = tf.nn.softmax(-W)
+            W = tf.exp(-W / 2)
 
         # kNN Graph
         if self.k > 0:
             W = self.topk(W, self.k)
 
         # Laplacian norm
-        '''
         D = tf.reduce_sum(W, axis=0)
         D_inv = 1.0 / (D + epsilon)
         D_sqrt_inv = tf.sqrt(D_inv)
@@ -544,8 +633,7 @@ class CNN_TPN_stop_grad(tf.keras.Model):
         D1 = tf.expand_dims(D_sqrt_inv, axis=1)
         D2 = tf.expand_dims(D_sqrt_inv, axis=0)
         S = D1 * W * D2
-        '''
-        S = W
+
         F = tf.linalg.inv(tf.eye(N) - self.alpha * S + epsilon)
         F = tf.matmul(F, y)
         label = tf.argmax(F, axis=1)
@@ -582,147 +670,6 @@ class CNN_TPN_stop_grad(tf.keras.Model):
         #                            validate_indices=False)
         ind1 = (topk_W > 0) | (tf.transpose(topk_W) > 0)  # union, k-nearest neighbor
         #ind2 = (topk_W > 0) & (tf.transpose(topk_W) > 0)  # intersection, mutal k-nearest neighbor
-        ind1 = tf.cast(ind1, tf.float32)
-
-        topk_W = ind1 * W
-
-        return topk_W
-
-class CNN_TPN(tf.keras.Model):
-    def __init__(self, h_dim, z_dim, rn, k, alpha, n_way, n_shot):
-        super(CNN_TPN, self).__init__()
-        self.h_dim = h_dim
-        self.z_dim = z_dim
-        self.rn = rn
-        self.k = k
-        self.alpha = alpha
-        self.n_way = n_way
-        self.n_shot = n_shot
-        self.encoder = NFGEncoder4TPN(h_dim, z_dim)#CNNEncoder4TPN(h_dim, z_dim)
-        self.relation = RelationModule4TPN(h_dim)
-
-
-    def build(self, input_shape):
-        self.epsilon = tf.keras.backend.epsilon()
-        if self.rn==300:       # learned sigma, fixed alpha
-            self.alpha = tf.constant(self.alpha)
-        else:                          # learned sigma and alpha
-            self.alpha = tf.Variable(self.alpha, name='alpha')
-        self.n_way_query = input_shape[0]
-        self.n_shot_query = input_shape[1]
-
-        self.gt = tf.reshape(tf.tile(tf.expand_dims(tf.range(self.n_way_query), 1), [1, tf.cast(self.n_shot_query, tf.int32)]), [-1])
-
-        self.y_one_hot = tf.reshape(tf.one_hot(self.gt, depth=self.n_way_query), [self.n_way_query*self.n_shot_query, -1])
-
-        self.ys = tf.tile(tf.reshape(
-            tf.range(0, self.n_way), [self.n_way, 1]), [1, self.n_shot])
-        self.ys_one_hot = tf.one_hot(self.ys, depth=self.n_way)
-        self.ys_one_hot = tf.reshape(self.ys_one_hot, [self.n_way*self.n_shot, self.n_way])
-
-        self.yu = tf.zeros((self.n_way_query*self.n_shot_query, self.n_way_query)) / tf.cast(self.n_way_query, tf.float32) + self.epsilon
-        self.y = tf.concat([self.ys_one_hot, self.yu], axis=0)
-
-        self.y_one_hot = tf.concat([self.ys_one_hot, self.y_one_hot], axis=0)
-
-    def call(self, q, s):
-
-        s_shape = s.shape
-        q_shape = q.shape
-        '''
-        num_classes, num_support = s_shape[0], s_shape[1]
-        num_queries = q_shape[1]
-        ys = tf.tile(tf.reshape(
-            tf.range(0, num_classes), [num_classes, 1]), [1, num_support])
-
-        ys_one_hot = tf.one_hot(ys, depth=num_classes)
-
-        '''
-        s = tf.reshape(s, [-1, s_shape[2], s_shape[3], s_shape[4]])
-        q = tf.reshape(q, [-1, q_shape[2], q_shape[3], q_shape[4]])
-
-        emb_s = self.encoder(s)
-        emb_q = self.encoder(q)
-
-        ce_loss, acc, sigma_value = self.label_prop(emb_s, emb_q)
-
-        return sigma_value, ce_loss, acc
-
-    def label_prop(self, x, u):
-
-        #epsilon = np.finfo(float).eps
-        # x: NxD, u: UxD
-        #s = tf.shape(ys)
-        #ys = tf.reshape(ys, (s[0] * s[1], -1))
-        #Ns, C = tf.shape(ys)[0], tf.shape(ys)[1]
-        #Nu = tf.shape(u)[0]
-
-        #yu = tf.zeros((Nu, C)) / tf.cast(C, tf.float32) + epsilon # 0 initialization
-        #yu = tf.ones((Nu,C))/tf.cast(C,tf.float32)            # 1/C initialization
-        #y = tf.concat([ys, yu], axis=0)
-        #gt = tf.reshape(tf.tile(tf.expand_dims(tf.range(C), 1), [1, tf.cast(Nu / C, tf.int32)]), [-1])
-
-        all_un = tf.concat([x, u], 0)
-        all_un = tf.reshape(all_un, [-1, 1600])
-        N, d = tf.shape(all_un)[0], tf.shape(all_un)[1]
-
-        # compute graph weights
-        if self.rn in [30, 300]:  # compute example-wise sigma
-            #self.sigma = self.relation(all_un)
-            #print(tf.reduce_min(self.sigma), tf.reduce_max(self.sigma), tf.reduce_mean(self.sigma))
-            self.sigma = 0
-            #all_un = all_un / (self.sigma + self.epsilon)
-            all1 = tf.expand_dims(all_un, axis=0)
-            all2 = tf.expand_dims(all_un, axis=1)
-            W = tf.reduce_mean(tf.square(all1 - all2), axis=2)
-            W = tf.exp(-W / 2)
-
-        # kNN Graph
-        if self.k > 0:
-            W = self.topk(W, self.k)
-
-        # Laplacian norm
-        D = tf.reduce_sum(W, axis=0)
-        D_inv = 1.0 / (D + self.epsilon)
-        D_sqrt_inv = tf.sqrt(D_inv)
-
-        # compute propagated label
-        D1 = tf.expand_dims(D_sqrt_inv, axis=1)
-        D2 = tf.expand_dims(D_sqrt_inv, axis=0)
-        S = D1 * W * D2
-        F = tf.linalg.inv(tf.eye(N) - self.alpha * S + self.epsilon)
-        F = tf.matmul(F, self.y)
-        label = tf.argmax(F, 1)
-
-        # loss computation
-        F = tf.nn.softmax(F)
-
-        #y_one_hot = tf.reshape(tf.one_hot(self.gt, depth=C), [Nu, -1])
-        #y_one_hot = tf.concat([ys, y_one_hot], axis=0)
-
-        ce_loss = self.y_one_hot * tf.math.log(F + self.epsilon)
-        ce_loss = tf.negative(ce_loss)
-        ce_loss = tf.reduce_mean(tf.reduce_sum(ce_loss, 1))
-
-        # only consider query examples acc
-        F_un = F[self.n_way*self.n_shot:, :]
-        acc = tf.reduce_mean(tf.cast(tf.equal(label[self.n_way*self.n_shot:], tf.cast(self.gt, tf.int64)), tf.float32))
-
-        return ce_loss, acc, self.sigma
-
-    def topk(self, W, k):
-        # construct k-NN and compute margin loss
-        values, indices = tf.nn.top_k(W, k, sorted=False)
-        my_range = tf.expand_dims(tf.range(0, tf.shape(indices)[0]), 1)
-        my_range_repeated = tf.tile(my_range, [1, k])
-        full_indices = tf.concat([tf.expand_dims(my_range_repeated, 2), tf.expand_dims(indices, 2)], axis=2)
-        full_indices = tf.reshape(full_indices, [-1, 2])
-        full_indices = tf.cast(full_indices, tf.int64)
-        sparse_w = tf.sparse.SparseTensor(
-            indices=full_indices, values=tf.reshape(values, [-1]), dense_shape=W.shape)
-        topk_W = tf.sparse.to_dense(sparse_w, default_value=0, validate_indices=False)
-        ind1 = (topk_W > 0) | (tf.transpose(topk_W) > 0)  # union, k-nearest neighbor
-        ind2 = (topk_W > 0) & (tf.transpose(topk_W) > 0)  # intersection, mutal k-nearest neighbor
         ind1 = tf.cast(ind1, tf.float32)
 
         topk_W = ind1 * W

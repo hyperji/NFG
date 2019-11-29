@@ -4,7 +4,7 @@
 # @FileName: meta_learning_train.py
 # @E-mail: hj@jimhe.cn
 
-from meta_learning import CNN_TPN_stop_grad, CNN_TPN
+from meta_learning import TPN_stop_grad
 from meta_learning_data import MiniImageNet_Generator, CUB_Generator
 import numpy as np
 import pickle
@@ -15,7 +15,7 @@ import os
 import glob
 import gc
 
-print("11:25,  18:37, employed gc to clear the garbage")
+print("11:29,  13:23, employed gc to clear the garbage")
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -29,13 +29,14 @@ def get_args():
     parser.add_argument("--n_way_train", type=int, default=5)
     parser.add_argument("--n_shot_train", type=int, default=1)
     parser.add_argument("--data_augment", type = bool, default=False)
-    parser.add_argument("--method", type=str, default="CNN_TPN") #or choice "CNN"
     parser.add_argument("--n_train_episodes", type=int, default=100)
     parser.add_argument("--n_test_episodes", type=int, default=500)
     parser.add_argument("--restore", type=bool, default=False)
     parser.add_argument("--rn", type=int, default=300)
-    parser.add_argument("--k", type=int, default=-1)
+    parser.add_argument("--k", type=int, default=20)
     parser.add_argument("--alpha", type=float, default=0.99)
+    parser.add_argument("--encoder_type", type=str, default="NFG")
+    parser.add_argument('--relation_type', type=str, default="NFG")
 
     # 如: python xx.py --foo hello  > hello
     args = parser.parse_args()
@@ -194,12 +195,10 @@ if __name__ == "__main__":
     print("n_query_train", n_query_train)
 
 
-    if arg.method == 'CNN_TPN':
-        model = CNN_TPN_stop_grad(h_dim, z_dim, rn=arg.rn, k=arg.k, alpha=arg.alpha)
-    elif arg.method == 'NFG_TPN':
-        raise NotImplementedError
-    else:
-        raise NotImplementedError
+    model = TPN_stop_grad(
+        h_dim, z_dim, rn=arg.rn, k=arg.k, alpha=arg.alpha,
+        encoder_type=arg.encoder_type, relation_type=arg.relation_type)
+
     latest_version = 0
 
     if arg.restore:
@@ -219,7 +218,7 @@ if __name__ == "__main__":
     initial_lr = 1e-3
 
     for eph in range(latest_version, n_epochs+latest_version):
-        lr = max(0.5 ** (eph // 100) * initial_lr, 1e-5)
+        lr = max(0.5 ** (eph // 100) * initial_lr, 1e-6)
         FeatEnc_optimizer.learning_rate = lr
         #print("lr no dual training", lr)
         print("lr", lr)
@@ -276,7 +275,3 @@ if __name__ == "__main__":
         # print("test acc", acc)
         accs.append(acc)
     print("final mean acc shot %d"%(another_shot), np.mean(accs))
-
-
-
-
