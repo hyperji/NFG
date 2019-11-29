@@ -15,7 +15,7 @@ import os
 import glob
 import gc
 
-print("11:29,  13:23, employed gc to clear the garbage")
+print("11:29,  17:03, encoder and relation update separately, no stop grad")
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -61,14 +61,14 @@ train_accuracy = tf.keras.metrics.Mean(name='train_accuracy')
 def dual_train_step(model, FeatEncOpt, RelModOpt, S, Q):
     with tf.GradientTape(persistent=True) as tape:
         FeatEncLoss, RelModLoss, acc = model(S, Q)
-    #FeatEncGrads = tape.gradient(FeatEncLoss, model.encoder.trainable_variables)
-    #RelModGrads = tape.gradient(RelModLoss, model.relation.trainable_variables)
-    gradients = tape.gradient(RelModLoss, model.trainable_variables)
+    FeatEncGrads = tape.gradient(FeatEncLoss, model.encoder.trainable_variables)
+    RelModGrads = tape.gradient(RelModLoss, model.relation.trainable_variables)
+    #gradients = tape.gradient(RelModLoss, model.trainable_variables)
 
-    RelModOpt.apply_gradients(zip(gradients, model.trainable_variables))
+    #RelModOpt.apply_gradients(zip(gradients, model.trainable_variables))
 
-    #FeatEncOpt.apply_gradients(zip(FeatEncGrads, model.encoder.trainable_variables))
-    #RelModOpt.apply_gradients(zip(RelModGrads, model.relation.trainable_variables))
+    FeatEncOpt.apply_gradients(zip(FeatEncGrads, model.encoder.trainable_variables))
+    RelModOpt.apply_gradients(zip(RelModGrads, model.relation.trainable_variables))
     train_loss(RelModLoss)
     # return acc
     train_accuracy(acc)

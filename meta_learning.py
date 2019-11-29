@@ -8,11 +8,10 @@ import tensorflow as tf
 from NFG_lite import Aggregator, NFG4img_v2, NFG4img
 import numpy as np
 from StandAlongSelfAtten import SASA
-print("meta learning.py, all embrassing nfgv2, 14:22, sigmoid, celoss， let's see what will happpen if ksize is 3")
+print("meta learning.py, all embrassing nfgv2, 20:46, sigmoid, celoss protoloss")
 
-class conv_block_v2(tf.keras.layers.Layer):
+class ConvBlock(tf.keras.layers.Layer):
     def __init__(self, out_channels, conv_padding = "SAME", pooling_padding = "VALID"):
-
         self.conv = tf.keras.layers.Conv2D(filters=out_channels,
                                            kernel_size=3, strides=1,
                                            padding=conv_padding,
@@ -20,7 +19,7 @@ class conv_block_v2(tf.keras.layers.Layer):
         self.bn = tf.keras.layers.BatchNormalization()
         self.max_pool = tf.keras.layers.MaxPool2D(2, padding=pooling_padding)
 
-        super(conv_block_v2, self).__init__()
+        super(ConvBlock, self).__init__()
     def call(self, x):
         x_ = self.conv(x)
         x_ = self.bn(x_)
@@ -28,57 +27,26 @@ class conv_block_v2(tf.keras.layers.Layer):
         x_ = self.max_pool(x_)
         return x_
 
-class ConvBlockNoMaxPool(tf.keras.layers.Layer):
-    def __init__(self, out_channels, padding="SAME"):
-        self.conv = tf.keras.layers.Conv2D(filters=out_channels,
-                                           kernel_size=3, strides=1,
-                                           padding=padding,
-                                           use_bias=True)
-        self.bn = tf.keras.layers.BatchNormalization()
-        super(ConvBlockNoMaxPool, self).__init__()
-
-    def call(self, x):
-        x_ = self.conv(x)
-        x_ = self.bn(x_)
-        x_ = tf.nn.relu(x_)
-        return x_
-
-class CNNEncoder4RelNet(tf.keras.layers.Layer):
-    def __init__(self, hidden_dim, final_dim):
-        super(CNNEncoder4RelNet, self).__init__()
-        self.conv1 = conv_block_v2(hidden_dim, conv_padding="VALID")
-        self.conv2 = conv_block_v2(hidden_dim, conv_padding="VALID")
-        self.conv3 = ConvBlockNoMaxPool(hidden_dim, padding="SAME")
-        self.conv4 = ConvBlockNoMaxPool(final_dim, padding="SAME")
-
-    def call(self, x):
-        x_ = self.conv1(x)
-        x_ = self.conv2(x_)
-        x_ = self.conv3(x_)
-        x_ = self.conv4(x_)
-        return x_
 
 class CNNEncoder(tf.keras.layers.Layer):
     def __init__(self, hidden_dim, final_dim):
         super(CNNEncoder, self).__init__()
-        self.conv1 = conv_block_v2(hidden_dim)
-        self.conv2 = conv_block_v2(hidden_dim)
-        self.conv3 = conv_block_v2(hidden_dim)
-        self.conv4 = conv_block_v2(final_dim)
-        #self.flatten = tf.keras.layers.Flatten()
+        self.conv1 = ConvBlock(hidden_dim)
+        self.conv2 = ConvBlock(hidden_dim)
+        self.conv3 = ConvBlock(hidden_dim)
+        self.conv4 = ConvBlock(final_dim)
 
     def call(self, x):
         x_ = self.conv1(x)
         x_ = self.conv2(x_)
         x_ = self.conv3(x_)
         x_ = self.conv4(x_)
-        #x_ = self.flatten(x_)
         return x_
 
 
-class NFGEncoder(tf.keras.layers.Layer):
+class NFGBlock(tf.keras.layers.Layer):
     def __init__(self, ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding='SAME'):
-        super(NFGEncoder, self).__init__()
+        super(NFGBlock, self).__init__()
         self.nfg = NFG4img(ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding)
         self.ln = tf.keras.layers.LayerNormalization()
     def call(self, x):
@@ -87,9 +55,9 @@ class NFGEncoder(tf.keras.layers.Layer):
         return x
 
 
-class NFGEncoder_v2(tf.keras.layers.Layer):
+class NFGBlock_v2(tf.keras.layers.Layer):
     def __init__(self, ksize, strides, d_neuron, dv, Nh, final_dim, padding='SAME'):
-        super(NFGEncoder_v2, self).__init__()
+        super(NFGBlock_v2, self).__init__()
         self.nfg = NFG4img_v2(
             ksize=ksize, strides=strides, d_neuron=d_neuron, dv=dv, Nh=Nh, final_dim=final_dim, padding=padding)
         self.ln = tf.keras.layers.LayerNormalization()
@@ -97,6 +65,75 @@ class NFGEncoder_v2(tf.keras.layers.Layer):
         x = self.nfg(x)
         x = self.ln(x)
         return x
+
+
+class NFGEncoder(tf.keras.layers.Layer):
+    def __init__(self, h_dim = 64, Nh = 8):
+        super(NFGEncoder, self).__init__()
+        self.nfg1 = NFGBlock(
+            ksize=3, strides=2, d_neuron=h_dim, dk=Nh, dv=h_dim, Nh=Nh, dact=Nh, final_dim=h_dim, padding='SAME')
+        self.nfg2 = NFGBlock(
+            ksize=3, strides=2, d_neuron=h_dim, dk=Nh, dv=h_dim, Nh=Nh, dact=Nh, final_dim=h_dim, padding='SAME')
+        self.nfg3 = NFGBlock(
+            ksize=3, strides=2, d_neuron=h_dim, dk=Nh, dv=h_dim, Nh=Nh, dact=Nh, final_dim=h_dim, padding='SAME')
+        self.nfg4 = NFGBlock(
+            ksize=3, strides=2, d_neuron=h_dim, dk=Nh, dv=h_dim, Nh=Nh, dact=Nh, final_dim=h_dim, padding='VALID')
+        self.agg3 = Aggregator(ksize=3, strides=1, padding="SAME")
+        self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
+
+    def call(self, x):
+        x_ = self.agg3(x)
+        x_ = self.nfg1(x_)
+        #print("X", x_.shape)
+
+        #x_ = self.agg2(x_)
+        x_ = self.nfg2(x_)
+        #print("X", x_.shape)
+
+        #x_ = self.agg2(x_)
+        x_ = self.nfg3(x_)
+        #print("X", x_.shape)
+
+        #x_ = self.agg2(x_)
+        #x_ = self.ln(x_)
+        x_ = self.nfg4(x_)
+        #print("X", x_.shape)
+
+        return x_
+
+class NFGEncoder_v2(tf.keras.layers.Layer):
+    def __init__(self, h_dim=64, Nh = 8):
+        super(NFGEncoder_v2, self).__init__()
+        self.nfg1 = NFGBlock_v2(
+            ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=Nh, final_dim=h_dim, padding='SAME')
+        self.nfg2 = NFGBlock_v2(
+            ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=Nh, final_dim=h_dim, padding='SAME')
+        self.nfg3 = NFGBlock_v2(
+            ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=Nh, final_dim=h_dim, padding='SAME')
+        self.nfg4 = NFGBlock_v2(
+            ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=Nh, final_dim=h_dim, padding='VALID')
+        self.agg3 = Aggregator(ksize=3, strides=1, padding="SAME")
+        self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
+
+    def call(self, x):
+        x_ = self.agg3(x)
+        x_ = self.nfg1(x_)
+        #print("X", x_.shape)
+
+        #x_ = self.agg2(x_)
+        x_ = self.nfg2(x_)
+        #print("X", x_.shape)
+
+        #x_ = self.agg2(x_)
+        x_ = self.nfg3(x_)
+        #print("X", x_.shape)
+
+        #x_ = self.agg2(x_)
+        #x_ = self.ln(x_)
+        x_ = self.nfg4(x_)
+        #print("X", x_.shape)
+
+        return x_
 
 class SASAEncoder(tf.keras.layers.Layer):
     def __init__(self, ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding='SAME'):
@@ -108,338 +145,40 @@ class SASAEncoder(tf.keras.layers.Layer):
         x = self.ln(x)
         return x
 
-class NFGEncoder4RelNet(tf.keras.layers.Layer):
-    def __init__(self, hidden_dim, final_dim):
-        super(NFGEncoder4RelNet, self).__init__()
-        self.agg3 = Aggregator(3, 1, padding="SAME")
-        self.agg2 = Aggregator(2, 1, padding="SAME")
-        self.nfg1 = NFGEncoder(ksize=3, strides=2, d_neuron=hidden_dim, dk=8, dv=hidden_dim, Nh=8, dact=8, final_dim=final_dim, padding="VALID")
-        self.nfg2 = NFGEncoder(ksize=3, strides=2, d_neuron=hidden_dim, dk=8, dv=hidden_dim, Nh=8, dact=8, final_dim=final_dim, padding="VALID")
-        self.nfg3 = NFGEncoder(ksize=3, strides=1, d_neuron=hidden_dim, dk=8, dv=hidden_dim, Nh=8, dact=8, final_dim=final_dim, padding="SAME")
-        self.nfg4 = NFGEncoder(ksize=3, strides=1, d_neuron=hidden_dim, dk=8, dv=hidden_dim, Nh=8, dact=8, final_dim=final_dim, padding="SAME")
+
+class CNNRelationModule(tf.keras.layers.Layer):
+    def __init__(self, h_dims = (64, 16)):
+        super(CNNRelationModule, self).__init__()
+        self.conv1 = ConvBlock(h_dims[0], pooling_padding="SAME")
+        self.conv2 = ConvBlock(h_dims[1], pooling_padding="VALID")
+        self.fc1 = tf.keras.layers.Dense(8, activation=tf.nn.relu, use_bias=True)
+        self.fc2 = tf.keras.layers.Dense(1, activation=tf.sigmoid, use_bias=True)
+        self.flatten = tf.keras.layers.Flatten()
 
     def call(self, x):
-        x_ = self.agg3(x)
-        x_ = self.nfg1(x_)
+        net = tf.reshape(x, [-1, 5, 5, 64])
+        net = self.conv1(net)
+        net = self.conv2(net)
 
-        x_ = self.agg2(x_)
-        x_ = self.nfg2(x_)
+        #print("net after conv2", net.shape)
 
-        x_ = self.agg2(x_)
-        x_ = self.nfg3(x_)
+        net = self.flatten(net)
 
-        x_ = self.agg2(x_)
-        x_ = self.nfg4(x_)
-        return x_
+        net = self.fc1(net)
+        net = self.fc2(net)
+
+        net = self.flatten(net)
+        return net
 
 
-class NFGRelationModule(tf.keras.Model):
-    """docstring for RelationNetwork"""
-    def __init__(self):
+class NFGRelationModule(tf.keras.layers.Layer):
+    def __init__(self, h_dims = (64, 16), Nhs = (8, 2)):
         super(NFGRelationModule, self).__init__()
-        self.agg2 = Aggregator(2, 1, padding="SAME")
-        self.nfg1 = NFGEncoder(ksize=3, strides=2, d_neuron=64, dk=8, dv=64, Nh=8, dact=8, final_dim=64, padding="VALID")
-        self.nfg2 = NFGEncoder(ksize=3, strides=2, d_neuron=64, dk=8, dv=64, Nh=8, dact=8, final_dim=64, padding="VALID")
-        self.fc1 = tf.keras.layers.Dense(8, activation = 'relu', use_bias = True)
-        self.fc2 = tf.keras.layers.Dense(1, activation = 'sigmoid', use_bias = True)
-
-    def call(self, x):
-
-        out = self.agg2(x)
-        out = self.nfg1(out)
-
-        #print("out after layer1", out.shape)
-        out = self.agg2(out)
-        out = self.nfg2(out)
-        #print("out after layer2", out.shape)
-        out = tf.reshape(out, [out.shape[0],-1])
-        #print("out after reshape", out.shape)
-        out = self.fc1(out)
-        #print("out after fc1", out.shape)
-        out = self.fc2(out)
-        #print("out after fc2", out.shape)
-        return out
-
-
-class NFGFeatEnc4RelNet(tf.keras.Model):
-    def __init__(self, hidden_dim, final_dim):
-        super(NFGFeatEnc4RelNet, self).__init__()
-        self.encoder = NFGEncoder4RelNet(hidden_dim, final_dim)
-        self.flatten = tf.keras.layers.Flatten()
-
-    def call(self, s, q):
-        s_shape = s.shape
-        q_shape = q.shape
-        n_way = s_shape[0]
-        n_shot = s_shape[1]
-        n_query = q_shape[1]
-        # s with shape [n_way, n_shot, W, H, C]
-        # q with shape [n_way, n_query, W, H, C]
-        y = tf.tile(tf.reshape(
-            tf.range(0, n_way), [n_way, 1]), [1, n_query])
-
-        y_one_hot = tf.one_hot(y, depth=n_way, dtype=tf.float32)
-
-        s = tf.reshape(s, [-1, s_shape[2], s_shape[3], s_shape[4]])
-        q = tf.reshape(q, [-1, q_shape[2], q_shape[3], q_shape[4]])
-        x = tf.concat([s, q], axis=0)
-
-        z = self.encoder(x)
-
-        ###################################################
-        z_ = self.flatten(z)
-
-        z_dim = z_.shape[-1]
-        z_proto_ = tf.reduce_mean(tf.reshape(
-            z_[:n_way * n_shot], [n_way, n_shot, z_dim]), axis=1)
-        zq_ = z_[n_way * n_shot:]
-
-        # print("z_proto.shape", z_proto.shape)
-        # print("zq.shape", zq.shape)
-
-        dists = euclidean_distance(zq_, z_proto_)
-        # print("dists.shape", dists.shape)
-
-        _log_dists = tf.nn.log_softmax(-dists, axis=1)
-        # print("_log_dists.shape", _log_dists.shape)
-        log_p_y = tf.reshape(_log_dists, [n_way, n_query, -1])
-
-        #preds = tf.cast(tf.argmax(log_p_y, axis=-1), tf.int32)
-        # print("preds", preds)
-
-        #masks = tf.cast(tf.equal(preds, y), tf.float32)
-
-        # print("masks", masks)
-
-        ce_loss = -tf.reduce_mean(tf.reshape(tf.reduce_sum(tf.multiply(y_one_hot, log_p_y), axis=-1), [-1]))
-        #acc = tf.reduce_mean(masks)
-
-        ##################################################
-
-
-
-        z_shape = z.shape
-
-        z_proto = tf.reduce_mean(tf.reshape(
-            z[:n_way * n_shot], [n_way, n_shot] + z_shape[1:]), axis=1)
-
-        zq = tf.reshape(z[n_way * n_shot:], [n_way * n_query] + z_shape[1:])
-
-        z_proto_ext = tf.tile(tf.expand_dims(z_proto, axis=0), [n_way * n_query, 1, 1, 1, 1])
-        zq_ext = tf.tile(tf.expand_dims(zq, axis=0), [n_way, 1, 1, 1, 1])
-        zq_ext = tf.transpose(zq_ext, [1, 0, 2, 3, 4])
-
-        relation_pairs = tf.concat([z_proto_ext, zq_ext], axis=-1)
-
-        relation_pairs = tf.reshape(relation_pairs, [n_way * n_query * n_way] + z_shape[1:-1] + [z_shape[-1] * 2])
-
-        return ce_loss, relation_pairs
-
-
-class RelationModule(tf.keras.Model):
-    """docstring for RelationNetwork"""
-    def __init__(self):
-        super(RelationModule, self).__init__()
-        self.layer1 = conv_block_v2(out_channels=64, conv_padding="VALID")
-        self.layer2 = conv_block_v2(out_channels=64, conv_padding="VALID")
-        self.fc1 = tf.keras.layers.Dense(8, activation = 'relu', use_bias = True)
-        self.fc2 = tf.keras.layers.Dense(1, activation = 'sigmoid', use_bias = True)
-
-    def call(self, x):
-        out = self.layer1(x)
-        #print("out after layer1", out.shape)
-        out = self.layer2(out)
-        #print("out after layer2", out.shape)
-        out = tf.reshape(out, [out.shape[0],-1])
-        #print("out after reshape", out.shape)
-        out = self.fc1(out)
-        #print("out after fc1", out.shape)
-        out = self.fc2(out)
-        #print("out after fc2", out.shape)
-        return out
-
-
-
-
-class FeatEnc4RelNet(tf.keras.Model):
-    def __init__(self, hidden_dim, final_dim):
-        super(FeatEnc4RelNet, self).__init__()
-        self.encoder = CNNEncoder4RelNet(hidden_dim, final_dim)
-        self.flatten = tf.keras.layers.Flatten()
-
-    def call(self, s, q):
-        s_shape = s.shape
-        q_shape = q.shape
-        n_way = s_shape[0]
-        n_shot = s_shape[1]
-        n_query = q_shape[1]
-        # s with shape [n_way, n_shot, W, H, C]
-        # q with shape [n_way, n_query, W, H, C]
-        y = tf.tile(tf.reshape(
-            tf.range(0, n_way), [n_way, 1]), [1, n_query])
-
-        y_one_hot = tf.one_hot(y, depth=n_way, dtype=tf.float32)
-
-        s = tf.reshape(s, [-1, s_shape[2], s_shape[3], s_shape[4]])
-        q = tf.reshape(q, [-1, q_shape[2], q_shape[3], q_shape[4]])
-        x = tf.concat([s, q], axis=0)
-
-        z = self.encoder(x)
-
-        ###################################################
-        z_ = self.flatten(z)
-
-        z_dim = z_.shape[-1]
-        z_proto_ = tf.reduce_mean(tf.reshape(
-            z_[:n_way * n_shot], [n_way, n_shot, z_dim]), axis=1)
-        zq_ = z_[n_way * n_shot:]
-
-        # print("z_proto.shape", z_proto.shape)
-        # print("zq.shape", zq.shape)
-
-        dists = euclidean_distance(zq_, z_proto_)
-        # print("dists.shape", dists.shape)
-
-        _log_dists = tf.nn.log_softmax(-dists, axis=1)
-        # print("_log_dists.shape", _log_dists.shape)
-        log_p_y = tf.reshape(_log_dists, [n_way, n_query, -1])
-
-        #preds = tf.cast(tf.argmax(log_p_y, axis=-1), tf.int32)
-        # print("preds", preds)
-
-        #masks = tf.cast(tf.equal(preds, y), tf.float32)
-
-        # print("masks", masks)
-
-        ce_loss = -tf.reduce_mean(tf.reshape(tf.reduce_sum(tf.multiply(y_one_hot, log_p_y), axis=-1), [-1]))
-        #acc = tf.reduce_mean(masks)
-
-        ##################################################
-
-
-
-        z_shape = z.shape
-
-        z_proto = tf.reduce_mean(tf.reshape(
-            z[:n_way * n_shot], [n_way, n_shot] + z_shape[1:]), axis=1)
-
-        zq = tf.reshape(z[n_way * n_shot:], [n_way * n_query] + z_shape[1:])
-
-        z_proto_ext = tf.tile(tf.expand_dims(z_proto, axis=0), [n_way * n_query, 1, 1, 1, 1])
-        zq_ext = tf.tile(tf.expand_dims(zq, axis=0), [n_way, 1, 1, 1, 1])
-        zq_ext = tf.transpose(zq_ext, [1, 0, 2, 3, 4])
-
-        relation_pairs = tf.concat([z_proto_ext, zq_ext], axis=-1)
-
-        relation_pairs = tf.reshape(relation_pairs, [n_way * n_query * n_way] + z_shape[1:-1] + [z_shape[-1] * 2])
-
-        return ce_loss, relation_pairs
-
-
-class CNNEncoder4TPN(tf.keras.layers.Layer):
-    def __init__(self, h_dim, z_dim):
-        super(CNNEncoder4TPN, self).__init__()
-        self.conv1 = conv_block_v2(h_dim)
-        self.conv2 = conv_block_v2(h_dim)
-        self.conv3 = conv_block_v2(h_dim)
-        self.conv4 = conv_block_v2(z_dim)
-        self.flatten = tf.keras.layers.Flatten()
-
-    def call(self, x):
-        x_ = self.conv1(x)
-        #print("X", x_.shape)
-        x_ = self.conv2(x_)
-        #print("X", x_.shape)
-        x_ = self.conv3(x_)
-        #print("X", x_.shape)
-        x_ = self.conv4(x_)
-        #print("X", x_.shape)
-        x_ = self.flatten(x_)
-        return x_
-
-class NFGEncoder4TPN(tf.keras.layers.Layer):
-    def __init__(self, h_dim, z_dim):
-        super(NFGEncoder4TPN, self).__init__()
-        self.nfg1 = NFGEncoder(
-            ksize=3, strides=2, d_neuron=h_dim, dk=8, dv=h_dim, Nh=8, dact=8, final_dim=h_dim, padding='SAME')
-        self.nfg2 = NFGEncoder(
-            ksize=3, strides=2, d_neuron=h_dim, dk=8, dv=h_dim, Nh=8, dact=8, final_dim=h_dim, padding='SAME')
-        self.nfg3 = NFGEncoder(
-            ksize=3, strides=2, d_neuron=h_dim, dk=8, dv=h_dim, Nh=8, dact=8, final_dim=h_dim, padding='SAME')
-        self.nfg4 = NFGEncoder(
-            ksize=3, strides=2, d_neuron=z_dim, dk=8, dv=z_dim, Nh=8, dact=8, final_dim=z_dim, padding='VALID')
-        self.agg3 = Aggregator(ksize=3, strides=1, padding="SAME")
         self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
-        self.flatten = tf.keras.layers.Flatten()
-        self.ln = tf.keras.layers.LayerNormalization()
-
-    def call(self, x):
-        x_ = self.agg3(x)
-        x_ = self.nfg1(x_)
-        #print("X", x_.shape)
-
-        #x_ = self.agg2(x_)
-        x_ = self.nfg2(x_)
-        #print("X", x_.shape)
-
-        #x_ = self.agg2(x_)
-        x_ = self.nfg3(x_)
-        #print("X", x_.shape)
-
-        #x_ = self.agg2(x_)
-        #x_ = self.ln(x_)
-        x_ = self.nfg4(x_)
-        #print("X", x_.shape)
-
-        x_ = self.flatten(x_)
-
-        return x_
-
-class NFGEncoder4TPN_v2(tf.keras.layers.Layer):
-    def __init__(self, h_dim, z_dim):
-        super(NFGEncoder4TPN_v2, self).__init__()
-        self.nfg1 = NFGEncoder_v2(
-            ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=8, final_dim=h_dim, padding='SAME')
-        self.nfg2 = NFGEncoder_v2(
-            ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=8, final_dim=h_dim, padding='SAME')
-        self.nfg3 = NFGEncoder_v2(
-            ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=8, final_dim=h_dim, padding='SAME')
-        self.nfg4 = NFGEncoder_v2(
-            ksize=3, strides=2, d_neuron=z_dim, dv=z_dim, Nh=8, final_dim=z_dim, padding='VALID')
-        self.agg3 = Aggregator(ksize=3, strides=1, padding="SAME")
-        self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
-        self.flatten = tf.keras.layers.Flatten()
-        self.ln = tf.keras.layers.LayerNormalization()
-
-    def call(self, x):
-        x_ = self.agg3(x)
-        x_ = self.nfg1(x_)
-        #print("X", x_.shape)
-
-        #x_ = self.agg2(x_)
-        x_ = self.nfg2(x_)
-        #print("X", x_.shape)
-
-        #x_ = self.agg2(x_)
-        x_ = self.nfg3(x_)
-        #print("X", x_.shape)
-
-        #x_ = self.agg2(x_)
-        #x_ = self.ln(x_)
-        x_ = self.nfg4(x_)
-        #print("X", x_.shape)
-
-        x_ = self.flatten(x_)
-
-        return x_
-
-
-class NFGRelationModule4TPN(tf.keras.layers.Layer):
-    def __init__(self, h_dim):
-        super(NFGRelationModule4TPN, self).__init__()
-        self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
-        self.nfg1 = NFGEncoder(ksize=3, strides=2, d_neuron=h_dim, dk=8, dv=h_dim, Nh=8, dact=8, final_dim=h_dim, padding='SAME')
-        self.nfg2 = NFGEncoder(ksize=3, strides=2, d_neuron=16, dk=2, dv=16, Nh=2, dact=2, final_dim=16, padding="VALID")
+        self.nfg1 = NFGBlock(ksize=3, strides=2, d_neuron=h_dims[0], dk=Nhs[0], dv=h_dims[0],
+                             Nh=Nhs[0], dact=Nhs[0], final_dim=h_dims[0], padding="SAME")
+        self.nfg2 = NFGBlock(ksize=3, strides=2, d_neuron=h_dims[1], dk=Nhs[1], dv=h_dims[1],
+                             Nh=Nhs[1], dact=Nhs[1], final_dim=h_dims[1], padding="VALID")
         self.fc1 = tf.keras.layers.Dense(8, activation=tf.nn.relu, use_bias=True)
         self.fc2 = tf.keras.layers.Dense(1, activation=tf.sigmoid, use_bias=False)
         self.flatten = tf.keras.layers.Flatten()
@@ -461,12 +200,14 @@ class NFGRelationModule4TPN(tf.keras.layers.Layer):
         return net
 
 
-class NFGRelationModule4TPN_v2(tf.keras.layers.Layer):
-    def __init__(self, h_dim):
-        super(NFGRelationModule4TPN_v2, self).__init__()
+class NFGRelationModule_v2(tf.keras.layers.Layer):
+    def __init__(self, h_dims = (64, 16), Nhs = (8, 2)):
+        super(NFGRelationModule_v2, self).__init__()
         self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
-        self.nfg1 = NFGEncoder_v2(ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=8, final_dim=h_dim, padding='SAME')
-        self.nfg2 = NFGEncoder_v2(ksize=3, strides=2, d_neuron=16, dv=16, Nh=2, final_dim=16, padding="VALID")
+        self.nfg1 = NFGBlock_v2(ksize=3, strides=2, d_neuron=h_dims[0], dv=h_dims[0],
+                                Nh=Nhs[0], final_dim=h_dims[0], padding='SAME')
+        self.nfg2 = NFGBlock_v2(ksize=3, strides=2, d_neuron=h_dims[1], dv=h_dims[1],
+                                Nh=Nhs[1], final_dim=Nhs[1], padding="VALID")
         self.fc1 = tf.keras.layers.Dense(8, activation=tf.nn.relu, use_bias=True)
         self.fc2 = tf.keras.layers.Dense(1, activation=tf.sigmoid, use_bias=True)
         self.flatten = tf.keras.layers.Flatten()
@@ -488,29 +229,100 @@ class NFGRelationModule4TPN_v2(tf.keras.layers.Layer):
         return net
 
 
-class RelationModule4TPN(tf.keras.layers.Layer):
-    def __init__(self, h_dim):
-        super(RelationModule4TPN, self).__init__()
-        self.conv1 = conv_block_v2(h_dim, pooling_padding="SAME")
-        self.conv2 = conv_block_v2(16, pooling_padding="VALID")
-        self.fc1 = tf.keras.layers.Dense(8, activation=tf.nn.relu, use_bias=True)
-        self.fc2 = tf.keras.layers.Dense(1, activation=tf.sigmoid, use_bias=True)
-        self.flatten = tf.keras.layers.Flatten()
+class RelationNets(tf.keras.Model):
+    def __init__(self, h_dim, z_dim, encoder_type = "CNN", relation_type = 'NONE'):
+        super(RelationNets, self).__init__()
+        self.h_dim = h_dim
+        self.z_dim = z_dim
 
-    def call(self, x):
-        net = tf.reshape(x, [-1, 5, 5, 64])
-        net = self.conv1(net)
-        net = self.conv2(net)
+        if encoder_type == "CNN":
+            self.encoder = CNNEncoder(h_dim, z_dim)
+        elif encoder_type == "NFG":
+            self.encoder = NFGEncoder_v2(h_dim, z_dim)  # CNNEncoder4TPN(h_dim, z_dim)
+        else:
+            raise NotImplementedError
+        if relation_type == 'CNN':
+            self.relation = CNNRelationModule(h_dims=(64, 16))
+        elif relation_type == "NFG":
+            self.relation = NFGRelationModule_v2(h_dims = (64, 16), Nhs=(8, 2))
+        elif relation_type == "NONE":
+            self.relation = None
+        else:
+            raise NotImplementedError
 
-        #print("net after conv2", net.shape)
+    def call(self, s, q):
+        s_shape = s.shape
+        q_shape = q.shape
+        n_way = s_shape[0]
+        n_shot = s_shape[1]
+        n_query = q_shape[1]
+        # s with shape [n_way, n_shot, W, H, C]
+        # q with shape [n_way, n_query, W, H, C]
+        y = tf.tile(tf.reshape(
+            tf.range(0, n_way), [n_way, 1]), [1, n_query])
 
-        net = self.flatten(net)
+        y_one_hot = tf.one_hot(y, depth=n_way, dtype=tf.float32)
 
-        net = self.fc1(net)
-        net = self.fc2(net)
+        s = tf.reshape(s, [-1, s_shape[2], s_shape[3], s_shape[4]])
+        q = tf.reshape(q, [-1, q_shape[2], q_shape[3], q_shape[4]])
+        x = tf.concat([s, q], axis=0)
 
-        net = self.flatten(net)
-        return net
+        z = self.encoder(x)
+        '''
+        ###################################################
+        z_ = self.flatten(z)
+
+        z_dim = z_.shape[-1]
+        z_proto_ = tf.reduce_mean(tf.reshape(
+            z_[:n_way * n_shot], [n_way, n_shot, z_dim]), axis=1)
+        zq_ = z_[n_way * n_shot:]
+
+        dists = euclidean_distance(zq_, z_proto_)
+        # print("dists.shape", dists.shape)
+
+        _log_dists = tf.nn.log_softmax(-dists, axis=1)
+        # print("_log_dists.shape", _log_dists.shape)
+        _log_p_y = tf.reshape(_log_dists, [n_way, n_query, -1])
+
+        # preds = tf.cast(tf.argmax(log_p_y, axis=-1), tf.int32)
+        # print("preds", preds)
+
+        # masks = tf.cast(tf.equal(preds, y), tf.float32)
+
+        # print("masks", masks)
+
+        proto_loss = -tf.reduce_mean(tf.reshape(tf.reduce_sum(tf.multiply(y_one_hot, _log_p_y), axis=-1), [-1]))
+        # acc = tf.reduce_mean(masks)
+
+        ##################################################
+        '''
+
+        z_shape = z.shape
+
+        z_proto = tf.reduce_mean(tf.reshape(
+            z[:n_way * n_shot], [n_way, n_shot] + z_shape[1:]), axis=1)
+
+        zq = tf.reshape(z[n_way * n_shot:], [n_way * n_query] + z_shape[1:])
+
+        z_proto_ext = tf.tile(tf.expand_dims(z_proto, axis=0), [n_way * n_query, 1, 1, 1, 1])
+        zq_ext = tf.tile(tf.expand_dims(zq, axis=0), [n_way, 1, 1, 1, 1])
+        zq_ext = tf.transpose(zq_ext, [1,0, 2, 3, 4])
+
+        relation_pairs = tf.concat([z_proto_ext, zq_ext], axis=-1)
+
+        relation_pairs = tf.reshape(relation_pairs, [n_way * n_query * n_way] + z_shape[1:-1] + [z_shape[-1] * 2])
+
+        relations = self.relation(relation_pairs)
+
+        log_p_y = tf.reshape(relations, [n_way, n_query, n_way])
+        preds = tf.cast(tf.argmax(log_p_y, axis=-1), tf.int32)
+        masks = tf.cast(tf.equal(preds, y), tf.float32)
+        acc = tf.reduce_mean(masks)
+
+        ce_loss = tf.reduce_mean(tf.reshape(tf.reduce_sum((y_one_hot - log_p_y) ** 2, axis=-1), [-1]))
+
+        return log_p_y, ce_loss, acc
+        #return proto_loss, ce_loss, acc
 
 
 class TPN_stop_grad(tf.keras.Model):
@@ -522,15 +334,15 @@ class TPN_stop_grad(tf.keras.Model):
         self.k = k
         self.alpha = alpha
         if encoder_type == "CNN":
-            self.encoder = CNNEncoder4TPN(h_dim, z_dim)
+            self.encoder = CNNEncoder(h_dim, z_dim)
         elif encoder_type == "NFG":
-            self.encoder = NFGEncoder4TPN_v2(h_dim, z_dim)#CNNEncoder4TPN(h_dim, z_dim)
+            self.encoder = NFGEncoder_v2(h_dim, z_dim)#CNNEncoder4TPN(h_dim, z_dim)
         else:
             raise NotImplementedError
         if relation_type == 'CNN':
-            self.relation = RelationModule4TPN(h_dim)
+            self.relation = CNNRelationModule(h_dims = (64, 16))
         elif relation_type == "NFG":
-            self.relation = NFGRelationModule4TPN_v2(h_dim)
+            self.relation = NFGRelationModule_v2(h_dims = (64, 16), Nhs=(8, 2))
         elif relation_type == "NONE":
             self.relation = None
         else:
@@ -539,6 +351,7 @@ class TPN_stop_grad(tf.keras.Model):
             self.alpha = tf.constant(self.alpha)
         else:                          # learned sigma and alpha
             self.alpha = tf.Variable(self.alpha, name='alpha', trainable=True)
+        self.flatten = tf.keras.layers.Flatten()
 
 
     def call(self, q, s):
@@ -562,7 +375,10 @@ class TPN_stop_grad(tf.keras.Model):
 
         emb_s = self.encoder(s)
         emb_q = self.encoder(q)
-        '''
+        emb_s = self.flatten(emb_s)
+        emb_q = self.flatten(emb_q)
+
+
         #TODO this loss is not used in original paper, but in order to reach the acc the original paper, we had to use this
 
         z_dim = emb_s.shape[-1]
@@ -585,11 +401,11 @@ class TPN_stop_grad(tf.keras.Model):
 
         ###############################################################################################
         #TODO originally this is no stop gradient in original paper
-        #ce_loss, acc, sigma_value = self.label_prop(tf.stop_gradient(emb_s), tf.stop_gradient(emb_q), ys_one_hot)
-        '''
-        ce_loss, acc, sigma_value = self.label_prop(emb_s, emb_q, ys_one_hot)
-        return sigma_value, ce_loss, acc
-        #return proto_loss, ce_loss, acc
+        ce_loss, acc, sigma_value = self.label_prop(tf.stop_gradient(emb_s), tf.stop_gradient(emb_q), ys_one_hot)
+
+        #ce_loss, acc, sigma_value = self.label_prop(emb_s, emb_q, ys_one_hot)
+        #return sigma_value, ce_loss, acc
+        return proto_loss, ce_loss, acc
 
     def label_prop(self, x, u, ys):
 
