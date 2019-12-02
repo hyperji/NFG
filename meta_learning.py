@@ -8,7 +8,7 @@ import tensorflow as tf
 from NFG_lite import Aggregator, NFG4img_v2, NFG4img
 import numpy as np
 from StandAlongSelfAtten import SASA
-print("meta learning.py, remove last 3 agg, 15:38, sigmoid, only celoss no stop grad, update batch norm")
+print("meta learning.py, 1:46, sigmoid, only celoss no stop grad, relmod ksize=5, protonet with nfgecoder_v3 and cnnencoder_v2")
 
 class ConvBlock(tf.keras.layers.Layer):
     def __init__(self, out_channels, conv_padding = "SAME", pooling_padding = "VALID"):
@@ -41,6 +41,30 @@ class CNNEncoder(tf.keras.layers.Layer):
         x_ = self.conv1(x)
         x_ = self.conv2(x_)
         x_ = self.conv3(x_)
+        x_ = self.conv4(x_)
+        return x_
+
+class CNNEncoder_v2(tf.keras.layers.Layer):
+    def __init__(self, hidden_dim, final_dim):
+        super(CNNEncoder_v2, self).__init__()
+        self.conv1 = ConvBlock(hidden_dim)
+        self.conv2 = ConvBlock(hidden_dim)
+        self.conv3 = ConvBlock(hidden_dim)
+        self.conv4 = ConvBlock(final_dim)
+        self.agg3 = Aggregator(ksize=3, strides=1, padding="SAME")
+        self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
+
+    def call(self, x):
+        x_ = self.agg3(x)
+        x_ = self.conv1(x_)
+
+        x_ = self.agg2(x_)
+        x_ = self.conv2(x_)
+
+        x_ = self.agg2(x_)
+        x_ = self.conv3(x_)
+
+        x_ = self.agg2(x_)
         x_ = self.conv4(x_)
         return x_
 
@@ -136,6 +160,41 @@ class NFGEncoder_v2(tf.keras.layers.Layer):
 
         return x_
 
+
+class NFGEncoder_v3(tf.keras.layers.Layer):
+    def __init__(self, h_dim=64, Nh = 8):
+        super(NFGEncoder_v3, self).__init__()
+        self.nfg1 = NFGBlock_v2(
+            ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=Nh, final_dim=h_dim, padding='SAME')
+        self.nfg2 = NFGBlock_v2(
+            ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=Nh, final_dim=h_dim, padding='SAME')
+        self.nfg3 = NFGBlock_v2(
+            ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=Nh, final_dim=h_dim, padding='SAME')
+        self.nfg4 = NFGBlock_v2(
+            ksize=3, strides=2, d_neuron=h_dim, dv=h_dim, Nh=Nh, final_dim=h_dim, padding='VALID')
+        self.agg3 = Aggregator(ksize=3, strides=1, padding="SAME")
+        self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
+
+    def call(self, x):
+        x_ = self.agg3(x)
+        x_ = self.nfg1(x_)
+        #print("X", x_.shape)
+
+        x_ = self.agg2(x_)
+        x_ = self.nfg2(x_)
+        #print("X", x_.shape)
+
+        x_ = self.agg2(x_)
+        x_ = self.nfg3(x_)
+        #print("X", x_.shape)
+
+        x_ = self.agg2(x_)
+        #x_ = self.ln(x_)
+        x_ = self.nfg4(x_)
+        #print("X", x_.shape)
+
+        return x_
+
 class SASAEncoder(tf.keras.layers.Layer):
     def __init__(self, ksize, strides, d_neuron, dk, dv, Nh, dact, final_dim, padding='SAME'):
         super(SASAEncoder, self).__init__()
@@ -176,10 +235,12 @@ class NFGRelationModule(tf.keras.layers.Layer):
     def __init__(self, h_dims = (64, 16), Nhs = (8, 2)):
         super(NFGRelationModule, self).__init__()
         self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
-        self.nfg1 = NFGBlock(ksize=3, strides=2, d_neuron=h_dims[0], dk=Nhs[0], dv=h_dims[0],
-                             Nh=Nhs[0], dact=Nhs[0], final_dim=h_dims[0], padding="SAME")
+        self.nfg1 = NFGBlock(ksize=5, strides=2, d_neuron=h_dims[0], dk=Nhs[0], dv=h_dims[0],
+                             Nh=Nhs[0], dact=Nhs[0], final_dim=h_dims[0], padding="VALID")
+        '''
         self.nfg2 = NFGBlock(ksize=3, strides=2, d_neuron=h_dims[1], dk=Nhs[1], dv=h_dims[1],
                              Nh=Nhs[1], dact=Nhs[1], final_dim=h_dims[1], padding="VALID")
+        '''
         self.fc1 = tf.keras.layers.Dense(8, activation=tf.nn.relu, use_bias=True)
         self.fc2 = tf.keras.layers.Dense(1, activation=tf.sigmoid, use_bias=False)
         self.flatten = tf.keras.layers.Flatten()
@@ -189,7 +250,7 @@ class NFGRelationModule(tf.keras.layers.Layer):
         #net = self.agg2(net)
         net = self.nfg1(net)
         #print("net after nfg1", net.shape)
-        net = self.nfg2(net)
+        #net = self.nfg2(net)
         #print("net after nfg2", net.shape)
 
         net = self.flatten(net)
@@ -205,10 +266,12 @@ class NFGRelationModule_v2(tf.keras.layers.Layer):
     def __init__(self, h_dims = (64, 16), Nhs = (8, 2)):
         super(NFGRelationModule_v2, self).__init__()
         self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
-        self.nfg1 = NFGBlock_v2(ksize=3, strides=2, d_neuron=h_dims[0], dv=h_dims[0],
-                                Nh=Nhs[0], final_dim=h_dims[0], padding='SAME')
+        self.nfg1 = NFGBlock_v2(ksize=5, strides=2, d_neuron=h_dims[0], dv=h_dims[0],
+                                Nh=Nhs[0], final_dim=h_dims[0], padding='VALID')
+        '''
         self.nfg2 = NFGBlock_v2(ksize=3, strides=2, d_neuron=h_dims[1], dv=h_dims[1],
                                 Nh=Nhs[1], final_dim=Nhs[1], padding="VALID")
+        '''
         self.fc1 = tf.keras.layers.Dense(8, activation=tf.nn.relu, use_bias=True)
         self.fc2 = tf.keras.layers.Dense(1, activation=tf.sigmoid, use_bias=True)
         self.flatten = tf.keras.layers.Flatten()
@@ -218,7 +281,7 @@ class NFGRelationModule_v2(tf.keras.layers.Layer):
         #net = self.agg2(net)
         net = self.nfg1(net)
         #print("net after nfg1", net.shape)
-        net = self.nfg2(net)
+        #net = self.nfg2(net)
         #print("net after nfg2", net.shape)
 
         net = self.flatten(net)
@@ -353,7 +416,7 @@ class TPN_stop_grad(tf.keras.Model):
         else:  # learned sigma and alpha
             self.alpha = tf.Variable(self.alpha, name='alpha', trainable=True)
 
-    def call(self, q, s):
+    def call(self, s, q):
         s_shape = s.shape
         q_shape = q.shape
         num_classes, num_support = s_shape[0], s_shape[1]
@@ -574,9 +637,14 @@ class NFG_Prototypical_Nets(tf.keras.Model):
 
 
 class Prototypical_Nets(tf.keras.Model):
-    def __init__(self, hidden_dim, final_dim):
+    def __init__(self, hidden_dim, final_dim, encoder_type="CNN"):
         super(Prototypical_Nets, self).__init__()
-        self.encoder = CNNEncoder(hidden_dim, final_dim)
+        if encoder_type == "CNN":
+            self.encoder = CNNEncoder_v2(hidden_dim, final_dim)
+        elif encoder_type == "NFG":
+            self.encoder = NFGEncoder_v3(hidden_dim, final_dim)
+        else:
+            raise NotImplementedError
         self.flatten = tf.keras.layers.Flatten()
 
     def call(self, s, q):

@@ -4,7 +4,7 @@
 # @FileName: meta_learning_train.py
 # @E-mail: hj@jimhe.cn
 
-from meta_learning import TPN_stop_grad
+from meta_learning import TPN_stop_grad, Prototypical_Nets, RelationNets
 from meta_learning_data import MiniImageNet_Generator, CUB_Generator
 import numpy as np
 import pickle
@@ -15,7 +15,7 @@ import os
 import glob
 import gc
 
-print("12 02,  15:46, no stop grad")
+print("12 02,  22:22, no stop grad, make it univeraled")
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -87,6 +87,9 @@ def get_args():
     parser.add_argument("--alpha", type=float, default=0.99)
     parser.add_argument("--encoder_type", type=str, default="NFG")
     parser.add_argument('--relation_type', type=str, default="NFG")
+    parser.add_argument('--method', type=str, default="TPN")
+    parser.add_argument("--power", type=int, default=2)
+    parser.add_argument("--end_learning_rate", type=float, default=0.0)
 
     # 如: python xx.py --foo hello  > hello
     args = parser.parse_args()
@@ -156,6 +159,7 @@ z_dim = 64
 
 if __name__ == "__main__":
     arg = get_args()
+    print("arg", arg)
 
     log_every_n_samples = arg.log_every_n_samples
     log_every_n_epochs = arg.log_every_n_epochs
@@ -244,10 +248,16 @@ if __name__ == "__main__":
     print("n_shot_train", n_shot_train)
     print("n_query_train", n_query_train)
 
-
-    model = TPN_stop_grad(
+    if arg.method == "TPN":
+        model = TPN_stop_grad(
         h_dim, z_dim, rn=arg.rn, k=arg.k, alpha=arg.alpha,
         encoder_type=arg.encoder_type, relation_type=arg.relation_type)
+    elif arg.method == "ProtoNet":
+        model = Prototypical_Nets(hidden_dim=h_dim, final_dim=z_dim, encoder_type=arg.encoder_type)
+    elif arg.method == "RelNet":
+        model = RelationNets(h_dim, z_dim, encoder_type = arg.encoder_type, relation_type = arg.relation_type)
+    else:
+        raise NotImplementedError
 
     latest_version = 0
 
@@ -262,8 +272,14 @@ if __name__ == "__main__":
             print("restore_path", restore_path)
             model.load_weights(restore_path)
 
-    learning_rate = CustomSchedule(init_lr=arg.start_learning_rate, num_train_steps=60000, warmup_steps=5000,
-                                   end_learning_rate=0, power=2)
+    num_train_steps=n_epochs*n_episodes
+    warmup_steps = num_train_steps // 10
+    print("n_train_steps", num_train_steps)
+    print("warmup_steps", warmup_steps)
+
+    learning_rate = CustomSchedule(
+        init_lr=arg.start_learning_rate, num_train_steps=n_epochs*n_episodes, warmup_steps=warmup_steps,
+        end_learning_rate=arg.end_learning_rate, power=arg.power)
 
     FeatEnc_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
     RelMod_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
@@ -275,7 +291,7 @@ if __name__ == "__main__":
             # inp -> portuguese, tar -> english
             data = train_generator[episode]
             #print("data[0].shape", data[0].shape)
-            dual_train_step(model, FeatEnc_optimizer, RelMod_optimizer, data[1], data[0])
+            dual_train_step(model, FeatEnc_optimizer, RelMod_optimizer, data[0], data[1])
             #train_step(model, FeatEnc_optimizer, data[1], data[0])
             if (episode + 1) % log_every_n_samples == 0:
                 # print(ls, ac)
@@ -289,7 +305,7 @@ if __name__ == "__main__":
             gc.collect()
             for episode in range(200):
                 test_data = test_generator[episode]
-                _, _, acc = model(test_data[1], test_data[0])
+                _, _, acc = model(test_data[0], test_data[1])
                 #print("test acc", acc)
                 accs.append(acc)
             print("mean acc", np.mean(accs))
@@ -309,7 +325,7 @@ if __name__ == "__main__":
     for episode in range(arg.n_test_episodes):
 
         test_data = test_generator[episode]
-        _, _, acc = model(test_data[1], test_data[0])
+        _, _, acc = model(test_data[0], test_data[1])
         #print("test acc", acc)
         accs.append(acc)
     print("final mean acc shot %d"%(n_shot_train), np.mean(accs))
@@ -317,7 +333,9 @@ if __name__ == "__main__":
     accs = []
     for episode in range(arg.n_test_episodes):
         test_data = test_generator1[episode]
-        _, _, acc = model(test_data[1], test_data[0])
+        _, _, acc = model(test_data[0], test_data[1])
         # print("test acc", acc)
         accs.append(acc)
     print("final mean acc shot %d"%(another_shot), np.mean(accs))
+
+    print(model.summary())
