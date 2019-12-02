@@ -15,22 +15,72 @@ import os
 import glob
 import gc
 
-print("11:29,  17:03, encoder and relation update separately, no stop grad")
+print("12 02,  15:46, no stop grad")
+
+
+class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
+    def __init__(self, init_lr, num_train_steps, warmup_steps=4000,
+                 end_learning_rate=0, power=1, ):
+        super(CustomSchedule, self).__init__()
+        self.init_lr = init_lr
+
+        self.num_train_steps = num_train_steps
+
+        self.warmup_steps = warmup_steps
+
+        self.end_learning_rate = end_learning_rate
+
+        self.power = power
+
+        self.the_val = (self.init_lr - self.end_learning_rate) * (1 - warmup_steps / self.num_train_steps) ** (
+            self.power) + self.end_learning_rate
+
+    def __call__(self, global_step):
+        learning_rate = tf.constant(value=self.init_lr, shape=[], dtype=tf.float32)
+
+        # Implements linear decay of the learning rate.
+        # print("global_step", global_step)
+        # print(learning_rate, self.end_learning_rate, self.num_train_steps, self.power)
+        # global_step = np.min(global_step, self.num_train_steps)
+        learning_rate = (learning_rate - self.end_learning_rate) * (1 - global_step / self.num_train_steps) ** (
+            self.power) + self.end_learning_rate
+
+        # Implements linear warmup. I.e., if global_step < num_warmup_steps, the
+        # learning rate will be `global_step/num_warmup_steps * init_lr`.
+        if self.warmup_steps:
+            global_steps_int = tf.cast(global_step, tf.int32)
+            warmup_steps_int = tf.constant(self.warmup_steps, dtype=tf.int32)
+
+            global_steps_float = tf.cast(global_steps_int, tf.float32)
+            warmup_steps_float = tf.cast(warmup_steps_int, tf.float32)
+
+            warmup_percent_done = global_steps_float / warmup_steps_float
+            # print("warmup_percent_done", warmup_percent_done)
+            # warmup_learning_rate = self.init_lr * warmup_percent_done
+            warmup_learning_rate = self.the_val * warmup_percent_done
+
+            is_warmup = tf.cast(global_steps_int < warmup_steps_int, tf.float32)
+            learning_rate = (
+                    (1.0 - is_warmup) * learning_rate + is_warmup * warmup_learning_rate)
+
+        return learning_rate
+
+
 
 def get_args():
     parser = argparse.ArgumentParser()
     # 添加参数
-    parser.add_argument('--n_epochs', type=int, default=400, help='n_epochs')
+    parser.add_argument('--n_epochs', type=int, default=600, help='n_epochs')
     parser.add_argument("--log_every_n_samples", type=int, default=100)
     parser.add_argument("--log_every_n_epochs", type=int, default=10)
     parser.add_argument("--ckpt", type=str, default="models")
-    parser.add_argument("--start_learning_rate", type=float, default=1e-4)
+    parser.add_argument("--start_learning_rate", type=float, default=1.5 * 1e-3)
     parser.add_argument("--dataset", type=str, default="mini-ImageNet") # or "CUB"
     parser.add_argument("--n_way_train", type=int, default=5)
     parser.add_argument("--n_shot_train", type=int, default=1)
     parser.add_argument("--data_augment", type = bool, default=False)
     parser.add_argument("--n_train_episodes", type=int, default=100)
-    parser.add_argument("--n_test_episodes", type=int, default=500)
+    parser.add_argument("--n_test_episodes", type=int, default=600)
     parser.add_argument("--restore", type=bool, default=False)
     parser.add_argument("--rn", type=int, default=300)
     parser.add_argument("--k", type=int, default=20)
@@ -59,16 +109,16 @@ train_accuracy = tf.keras.metrics.Mean(name='train_accuracy')
 
 @tf.function
 def dual_train_step(model, FeatEncOpt, RelModOpt, S, Q):
-    with tf.GradientTape(persistent=True) as tape:
+    with tf.GradientTape() as tape:
         FeatEncLoss, RelModLoss, acc = model(S, Q)
-    FeatEncGrads = tape.gradient(FeatEncLoss, model.encoder.trainable_variables)
-    RelModGrads = tape.gradient(RelModLoss, model.relation.trainable_variables)
-    #gradients = tape.gradient(RelModLoss, model.trainable_variables)
+    #FeatEncGrads = tape.gradient(FeatEncLoss, model.encoder.trainable_variables)
+    #RelModGrads = tape.gradient(RelModLoss, model.relation.trainable_variables)
+    gradients = tape.gradient(RelModLoss, model.trainable_variables)
 
-    #RelModOpt.apply_gradients(zip(gradients, model.trainable_variables))
+    RelModOpt.apply_gradients(zip(gradients, model.trainable_variables))
 
-    FeatEncOpt.apply_gradients(zip(FeatEncGrads, model.encoder.trainable_variables))
-    RelModOpt.apply_gradients(zip(RelModGrads, model.relation.trainable_variables))
+    #FeatEncOpt.apply_gradients(zip(FeatEncGrads, model.encoder.trainable_variables))
+    #RelModOpt.apply_gradients(zip(RelModGrads, model.relation.trainable_variables))
     train_loss(RelModLoss)
     # return acc
     train_accuracy(acc)
@@ -212,17 +262,13 @@ if __name__ == "__main__":
             print("restore_path", restore_path)
             model.load_weights(restore_path)
 
+    learning_rate = CustomSchedule(init_lr=arg.start_learning_rate, num_train_steps=60000, warmup_steps=5000,
+                                   end_learning_rate=0, power=2)
 
-    FeatEnc_optimizer = tf.keras.optimizers.Adam()
-    RelMod_optimizer = tf.keras.optimizers.Adam()
-    initial_lr = 1e-3
+    FeatEnc_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
+    RelMod_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
 
     for eph in range(latest_version, n_epochs+latest_version):
-        lr = max(0.5 ** (eph // 100) * initial_lr, 1e-6)
-        FeatEnc_optimizer.learning_rate = lr
-        #print("lr no dual training", lr)
-        print("lr", lr)
-        RelMod_optimizer.learning_rate = lr
         for episode in range(n_episodes):
             train_loss.reset_states()
             train_accuracy.reset_states()

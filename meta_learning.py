@@ -8,7 +8,7 @@ import tensorflow as tf
 from NFG_lite import Aggregator, NFG4img_v2, NFG4img
 import numpy as np
 from StandAlongSelfAtten import SASA
-print("meta learning.py, all embrassing nfgv2, 20:46, sigmoid, celoss protoloss")
+print("meta learning.py, remove last 3 agg, 15:38, sigmoid, only celoss no stop grad, update batch norm")
 
 class ConvBlock(tf.keras.layers.Layer):
     def __init__(self, out_channels, conv_padding = "SAME", pooling_padding = "VALID"):
@@ -16,14 +16,15 @@ class ConvBlock(tf.keras.layers.Layer):
                                            kernel_size=3, strides=1,
                                            padding=conv_padding,
                                            use_bias=True)
-        self.bn = tf.keras.layers.BatchNormalization()
+        self.bn = tf.keras.layers.BatchNormalization(center=True, scale=True)
+        self.relu = tf.keras.layers.ReLU()
         self.max_pool = tf.keras.layers.MaxPool2D(2, padding=pooling_padding)
 
         super(ConvBlock, self).__init__()
     def call(self, x):
         x_ = self.conv(x)
         x_ = self.bn(x_)
-        x_ = tf.nn.relu(x_)
+        x_ = self.relu(x_)
         x_ = self.max_pool(x_)
         return x_
 
@@ -185,7 +186,7 @@ class NFGRelationModule(tf.keras.layers.Layer):
 
     def call(self, x):
         net = tf.reshape(x, [-1, 5, 5, 64])
-        net = self.agg2(net)
+        #net = self.agg2(net)
         net = self.nfg1(net)
         #print("net after nfg1", net.shape)
         net = self.nfg2(net)
@@ -326,7 +327,7 @@ class RelationNets(tf.keras.Model):
 
 
 class TPN_stop_grad(tf.keras.Model):
-    def __init__(self, h_dim, z_dim, rn, k, alpha, encoder_type = "CNN", relation_type = 'NONE'):
+    def __init__(self, h_dim, z_dim, rn, k, alpha, encoder_type="CNN", relation_type='NONE'):
         super(TPN_stop_grad, self).__init__()
         self.h_dim = h_dim
         self.z_dim = z_dim
@@ -336,23 +337,21 @@ class TPN_stop_grad(tf.keras.Model):
         if encoder_type == "CNN":
             self.encoder = CNNEncoder(h_dim, z_dim)
         elif encoder_type == "NFG":
-            self.encoder = NFGEncoder_v2(h_dim, z_dim)#CNNEncoder4TPN(h_dim, z_dim)
+            self.encoder = NFGEncoder_v2(h_dim, z_dim)
         else:
             raise NotImplementedError
         if relation_type == 'CNN':
-            self.relation = CNNRelationModule(h_dims = (64, 16))
+            self.relation = CNNRelationModule(h_dims=(64, 16))
         elif relation_type == "NFG":
-            self.relation = NFGRelationModule_v2(h_dims = (64, 16), Nhs=(8, 2))
+            self.relation = NFGRelationModule_v2(h_dims=(64, 16), Nhs=(8, 2))
         elif relation_type == "NONE":
             self.relation = None
         else:
             raise NotImplementedError
-        if self.rn==300:       # learned sigma, fixed alpha
+        if self.rn == 300:  # learned sigma, fixed alpha
             self.alpha = tf.constant(self.alpha)
-        else:                          # learned sigma and alpha
+        else:  # learned sigma and alpha
             self.alpha = tf.Variable(self.alpha, name='alpha', trainable=True)
-        self.flatten = tf.keras.layers.Flatten()
-
 
     def call(self, q, s):
         s_shape = s.shape
@@ -361,7 +360,7 @@ class TPN_stop_grad(tf.keras.Model):
         num_queries = q_shape[1]
         ys = tf.tile(tf.reshape(
             tf.range(0, num_classes), [num_classes, 1]), [1, num_support])
-        #ys = np.tile(np.arange(num_classes)[:, np.newaxis], (1, num_support)).astype(np.uint8)
+        # ys = np.tile(np.arange(num_classes)[:, np.newaxis], (1, num_support)).astype(np.uint8)
 
         ys_one_hot = tf.one_hot(ys, depth=num_classes)
 
@@ -375,12 +374,9 @@ class TPN_stop_grad(tf.keras.Model):
 
         emb_s = self.encoder(s)
         emb_q = self.encoder(q)
-        emb_s = self.flatten(emb_s)
-        emb_q = self.flatten(emb_q)
 
-
-        #TODO this loss is not used in original paper, but in order to reach the acc the original paper, we had to use this
-
+        # TODO this loss is not used in original paper, but in order to reach the acc the original paper, we had to use this
+        '''
         z_dim = emb_s.shape[-1]
         z_proto = tf.reduce_mean(tf.reshape(
             emb_s, [num_classes, num_support, z_dim]), axis=1)
@@ -402,10 +398,10 @@ class TPN_stop_grad(tf.keras.Model):
         ###############################################################################################
         #TODO originally this is no stop gradient in original paper
         ce_loss, acc, sigma_value = self.label_prop(tf.stop_gradient(emb_s), tf.stop_gradient(emb_q), ys_one_hot)
-
-        #ce_loss, acc, sigma_value = self.label_prop(emb_s, emb_q, ys_one_hot)
-        #return sigma_value, ce_loss, acc
-        return proto_loss, ce_loss, acc
+        '''
+        ce_loss, acc, sigma_value = self.label_prop(emb_s, emb_q, ys_one_hot)
+        return sigma_value, ce_loss, acc
+        # return proto_loss, ce_loss, acc
 
     def label_prop(self, x, u, ys):
 
@@ -417,7 +413,7 @@ class TPN_stop_grad(tf.keras.Model):
         Nu = tf.shape(u)[0]
 
         yu = tf.zeros((Nu, C)) / tf.cast(C, tf.float32) + epsilon  # 0 initialization
-        #yu = tf.ones((Nu,C))/tf.cast(C,tf.float32)            # 1/C initialization
+        # yu = tf.ones((Nu,C))/tf.cast(C,tf.float32)            # 1/C initialization
         y = tf.concat([ys, yu], axis=0)
         gt = tf.reshape(tf.tile(tf.expand_dims(tf.range(C), 1), [1, tf.cast(Nu / C, tf.int32)]), [-1])
 
@@ -425,12 +421,13 @@ class TPN_stop_grad(tf.keras.Model):
         all_un = tf.reshape(all_un, [-1, 1600])
         N, d = tf.shape(all_un)[0], tf.shape(all_un)[1]
 
+        # all_un_stop_grad = tf.stop_gradient(all_un)
+
         # compute graph weights
         if self.rn in [30, 300]:  # compute example-wise sigma
-
             self.sigma = self.relation(all_un)
+
             all_un = all_un / (self.sigma + epsilon)
-            #all_un = all_un * self.sigma
             all1 = tf.expand_dims(all_un, axis=0)
             all2 = tf.expand_dims(all_un, axis=1)
             W = tf.reduce_mean(tf.square(all1 - all2), axis=2)
@@ -482,10 +479,10 @@ class TPN_stop_grad(tf.keras.Model):
             indices=full_indices, values=tf.reshape(values, [-1]), dense_shape=W.shape)
         topk_W = tf.sparse.to_dense(sparse_w, default_value=0, validate_indices=False)
 
-        #topk_W = tf.compat.v1.sparse_to_dense(full_indices, tf.shape(W), tf.reshape(values, [-1]), default_value=0.,
+        # topk_W = tf.compat.v1.sparse_to_dense(full_indices, tf.shape(W), tf.reshape(values, [-1]), default_value=0.,
         #                            validate_indices=False)
         ind1 = (topk_W > 0) | (tf.transpose(topk_W) > 0)  # union, k-nearest neighbor
-        #ind2 = (topk_W > 0) & (tf.transpose(topk_W) > 0)  # intersection, mutal k-nearest neighbor
+        # ind2 = (topk_W > 0) & (tf.transpose(topk_W) > 0)  # intersection, mutal k-nearest neighbor
         ind1 = tf.cast(ind1, tf.float32)
 
         topk_W = ind1 * W
