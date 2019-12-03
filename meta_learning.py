@@ -8,7 +8,7 @@ import tensorflow as tf
 from NFG_lite import Aggregator, NFG4img_v2, NFG4img
 import numpy as np
 from StandAlongSelfAtten import SASA
-print("meta learning.py, 1:46, sigmoid, only celoss no stop grad, relmod ksize=5, protonet with nfgecoder_v3 and cnnencoder_v2")
+print("meta learning.py, 1:46, sigmoid, only celoss no stop grad, relmod ksize=5, protonet without nfgecoder_v3 and cnnencoder_v2")
 
 class ConvBlock(tf.keras.layers.Layer):
     def __init__(self, out_channels, conv_padding = "SAME", pooling_padding = "VALID"):
@@ -640,9 +640,9 @@ class Prototypical_Nets(tf.keras.Model):
     def __init__(self, hidden_dim, final_dim, encoder_type="CNN"):
         super(Prototypical_Nets, self).__init__()
         if encoder_type == "CNN":
-            self.encoder = CNNEncoder_v2(hidden_dim, final_dim)
+            self.encoder = CNNEncoder(hidden_dim, final_dim)
         elif encoder_type == "NFG":
-            self.encoder = NFGEncoder_v3(hidden_dim, final_dim)
+            self.encoder = NFGEncoder(hidden_dim, final_dim)
         else:
             raise NotImplementedError
         self.flatten = tf.keras.layers.Flatten()

@@ -13,6 +13,7 @@ import pandas as pd
 import time
 import matplotlib.pyplot as plt
 #import imageio
+print("meta_learning_data, no augment")
 
 class MiniImageNet_Generator(object):
 
@@ -70,7 +71,7 @@ class MiniImageNet_Generator(object):
         #if augment:
         #    data = self.rotate_batch(data)
         data = data.astype(np.float32)
-        data = self.augment(data)
+        #data = self.augment(data)
         #data = tf.convert_to_tensor(data, dtype=tf.float32)
 
         data = self.preprocess_batch(data)

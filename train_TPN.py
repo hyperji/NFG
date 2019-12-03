@@ -14,8 +14,9 @@ from sklearn.preprocessing import LabelEncoder
 import os
 import glob
 import gc
+from utils import save_statistics
 
-print("12 02,  22:22, no stop grad, make it univeraled")
+print("12 03,  20:31, no stop grad, make it univeraled")
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -78,6 +79,7 @@ def get_args():
     parser.add_argument("--dataset", type=str, default="mini-ImageNet") # or "CUB"
     parser.add_argument("--n_way_train", type=int, default=5)
     parser.add_argument("--n_shot_train", type=int, default=1)
+    parser.add_argument("--n_query_train", type=int, default=15)
     parser.add_argument("--data_augment", type = bool, default=False)
     parser.add_argument("--n_train_episodes", type=int, default=100)
     parser.add_argument("--n_test_episodes", type=int, default=600)
@@ -90,6 +92,7 @@ def get_args():
     parser.add_argument('--method', type=str, default="TPN")
     parser.add_argument("--power", type=int, default=2)
     parser.add_argument("--end_learning_rate", type=float, default=0.0)
+    parser.add_argument("--use_val_data", type=bool, default=True)
 
     # 如: python xx.py --foo hello  > hello
     args = parser.parse_args()
@@ -142,9 +145,9 @@ def train_step(model, optimizer, S, Q):
     #return acc
     train_accuracy(acc)
 
-n_way_eval = 5
-n_shot_eval = 5
-n_query_eval = 15
+n_way_val = 5
+n_shot_val = 5
+n_query_val = 15
 
 n_way_test = 5
 n_shot_test = 5
@@ -168,7 +171,7 @@ if __name__ == "__main__":
     n_episodes = arg.n_train_episodes
     n_way_train = arg.n_way_train
     n_shot_train = arg.n_shot_train
-    n_query_train = 15
+    n_query_train = arg.n_query_train
 
     #y_true = tf.reshape(tf.tile(tf.expand_dims(tf.range(n_way_train), 1), [1, n_query_train]), [-1])
     #y_true = tf.one_hot(y_true, depth=n_way_train)
@@ -177,19 +180,32 @@ if __name__ == "__main__":
     if arg.dataset == "mini-ImageNet":
         train_in = open("./data/mini-imagenet/mini-imagenet-cache-train.pkl","rb")
         test_in = open("./data/mini-imagenet/mini-imagenet-cache-test.pkl", "rb")
+        val_in = open("./data/mini-imagenet/mini-imagenet-cache-val.pkl", 'rb')
 
         train = pickle.load(train_in)
         test = pickle.load(test_in)
+        val = pickle.load(val_in)
         X_train = train["image_data"]
         X_train = X_train.reshape([64, 600, 84, 84, 3])
+
+        X_val = val["image_data"]
+        X_val = X_val.reshape([16, 600, 84, 84, 3])
 
         X_test = test["image_data"]
         X_test = X_test.reshape([20, 600, 84, 84, 3])
         train_generator = MiniImageNet_Generator(
             X_train, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_train)
 
+        if arg.use_val_data:
+            print("using validation data for validation")
+            val_generator = MiniImageNet_Generator(X_val, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_val)
+        else:
+            print("Not using validation data")
+            val_generator = MiniImageNet_Generator(
+                X_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_val)
+
         test_generator = MiniImageNet_Generator(
-            X_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_test)
+                X_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_test)
 
         if n_shot_train == 1:
             another_shot = 5
@@ -243,6 +259,7 @@ if __name__ == "__main__":
             X_test, y_test, n_way=n_way_test, n_shot=1, n_query=n_query_test)
     print("X_train", X_train.shape)
     print("X_test", X_test.shape)
+    print("X_val", X_val.shape)
 
     print("n_way_train", n_way_train)
     print("n_shot_train", n_shot_train)
@@ -262,13 +279,13 @@ if __name__ == "__main__":
     latest_version = 0
 
     if arg.restore:
-        compat_names = arg.dataset + "_" + arg.method + "_" + str(arg.n_way_train) + "_" + str(arg.n_shot_train) + "_"
+        compat_names = arg.dataset + "_" + arg.method + "_" + arg.encoder_type + "_" + str(arg.n_way_train) + "_" + str(arg.n_shot_train) + "_"
         compat_dir_path = os.path.join(arg.ckpt, compat_names)
         all_compatiable_models = glob.glob(compat_dir_path+'*')
         if len(all_compatiable_models) > 0:
             latest_version = get_the_latest_model_version(all_compatiable_models)
             restore_name = compat_names+str(latest_version)
-            restore_path = os.path.join(arg.ckpt, restore_name)
+            restore_path = os.path.join(arg.ckpt, restore_name, restore_name)
             print("restore_path", restore_path)
             model.load_weights(restore_path)
 
@@ -283,6 +300,16 @@ if __name__ == "__main__":
 
     FeatEnc_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
     RelMod_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
+
+    best_val_acc = 0
+    val_accs = {}
+
+    experiment_name = arg.dataset + "_" + arg.method + "_" + arg.encoder_type + "_" + str(arg.n_way_train) + "_" + str(
+                    arg.n_shot_train)
+
+    logs = "{}-way {}-shot learning problems".format(n_way_train, n_shot_train)
+    save_statistics(experiment_name, ["Experimental details: {}".format(logs)])
+    save_statistics(experiment_name, ["epoch", "train_acc", "val_acc", "test_acc"])
 
     for eph in range(latest_version, n_epochs+latest_version):
         for episode in range(n_episodes):
@@ -304,21 +331,29 @@ if __name__ == "__main__":
         if (eph + 1) % log_every_n_epochs == 0:
             gc.collect()
             for episode in range(200):
-                test_data = test_generator[episode]
+                test_data = val_generator[episode]
                 _, _, acc = model(test_data[0], test_data[1])
                 #print("test acc", acc)
                 accs.append(acc)
-            print("mean acc", np.mean(accs))
-            """
-            save_name = arg.dataset + "_" + arg.method + "_" + str(arg.n_way_train) + "_" + str(
-                arg.n_shot_train) + "_" + str(eph)
-            save_dir_path = os.path.join(arg.ckpt, save_name)
+            mean_val_acc = np.mean(accs)
+            print("mean acc", mean_val_acc)
+            if mean_val_acc > best_val_acc:
+                line_to_add = [eph+1, train_accuracy.result().numpy(), mean_val_acc, "None"]
+                save_statistics(experiment_name, line_to_add)
+                if arg.use_val_data:
+                    print("surpass the best_val_acc, saving model...")
+                    save_name = arg.dataset + "_" + arg.method + "_" + arg.encoder_type + "_" + str(arg.n_way_train) + "_" + str(
+                        arg.n_shot_train) + "_" + str(eph+1)
+                    save_dir_path = os.path.join(arg.ckpt, save_name)
 
-            if not os.path.exists(save_dir_path):
-                os.makedirs(save_dir_path)
+                    if not os.path.exists(save_dir_path):
+                        os.makedirs(save_dir_path)
 
-            model.save_weights(os.path.join(save_dir_path, save_name))
-            """
+                    model.save_weights(os.path.join(save_dir_path, save_name))
+                else:
+                    print("Not using validation data, skipping saving...")
+                best_val_acc = mean_val_acc
+
 
 
     accs = []
@@ -329,6 +364,8 @@ if __name__ == "__main__":
         #print("test acc", acc)
         accs.append(acc)
     print("final mean acc shot %d"%(n_shot_train), np.mean(accs))
+    line_to_add = ["{}-shot acc".format(n_shot_train), "None", "None", np.mean(accs)]
+    save_statistics(experiment_name, line_to_add)
 
     accs = []
     for episode in range(arg.n_test_episodes):
@@ -337,5 +374,45 @@ if __name__ == "__main__":
         # print("test acc", acc)
         accs.append(acc)
     print("final mean acc shot %d"%(another_shot), np.mean(accs))
+
+    line_to_add = ["{}-shot acc".format(another_shot), "None", "None", np.mean(accs)]
+    save_statistics(experiment_name, line_to_add)
+
+    if arg.use_val_data:
+        print("restoring best valided model")
+        compat_names = arg.dataset + "_" + arg.method + "_" + arg.encoder_type + "_" + str(arg.n_way_train) + "_" + str(
+                        arg.n_shot_train) + "_"
+        compat_dir_path = os.path.join(arg.ckpt, compat_names)
+        all_compatiable_models = glob.glob(compat_dir_path + '*')
+        if len(all_compatiable_models) > 0:
+            latest_version = get_the_latest_model_version(all_compatiable_models)
+            restore_name = compat_names + str(latest_version)
+            restore_path = os.path.join(arg.ckpt, restore_name, restore_name)
+            print("restore_path", restore_path)
+            model.load_weights(restore_path)
+
+        accs = []
+        for episode in range(arg.n_test_episodes):
+            test_data = test_generator[episode]
+            _, _, acc = model(test_data[0], test_data[1])
+            # print("test acc", acc)
+            accs.append(acc)
+        print("the best valided model mean acc shot %d" % (n_shot_train), np.mean(accs))
+
+        line_to_add = ["best valided {}-shot acc".format(n_shot_train), "None", "None", np.mean(accs)]
+        save_statistics(experiment_name, line_to_add)
+
+        accs = []
+        for episode in range(arg.n_test_episodes):
+            test_data = test_generator1[episode]
+            _, _, acc = model(test_data[0], test_data[1])
+            # print("test acc", acc)
+            accs.append(acc)
+        print("the best valided model mean acc shot %d" % (another_shot), np.mean(accs))
+
+        line_to_add = ["best valided {}-shot acc".format(another_shot), "None", "None", np.mean(accs)]
+        save_statistics(experiment_name, line_to_add)
+
+
 
     print(model.summary())
