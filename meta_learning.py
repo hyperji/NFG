@@ -8,7 +8,7 @@ import tensorflow as tf
 from NFG_lite import Aggregator, NFG4img_v2, NFG4img
 import numpy as np
 from StandAlongSelfAtten import SASA
-print("meta learning.py, 1:46, sigmoid, only celoss no stop grad, relmod ksize=5, protonet without nfgecoder_v3 and cnnencoder_v2")
+print("meta learning.py, 12:04, 22:59, relmod ksize=5, protonet with nfgecoder_v2, fix bugs")
 
 class ConvBlock(tf.keras.layers.Layer):
     def __init__(self, out_channels, conv_padding = "SAME", pooling_padding = "VALID"):
@@ -302,7 +302,7 @@ class RelationNets(tf.keras.Model):
         if encoder_type == "CNN":
             self.encoder = CNNEncoder(h_dim, z_dim)
         elif encoder_type == "NFG":
-            self.encoder = NFGEncoder_v2(h_dim, z_dim)  # CNNEncoder4TPN(h_dim, z_dim)
+            self.encoder = NFGEncoder_v2(h_dim, Nh=8)  # CNNEncoder4TPN(h_dim, z_dim)
         else:
             raise NotImplementedError
         if relation_type == 'CNN':
@@ -400,7 +400,7 @@ class TPN_stop_grad(tf.keras.Model):
         if encoder_type == "CNN":
             self.encoder = CNNEncoder(h_dim, z_dim)
         elif encoder_type == "NFG":
-            self.encoder = NFGEncoder_v2(h_dim, z_dim)
+            self.encoder = NFGEncoder_v2(h_dim, Nh=8)
         else:
             raise NotImplementedError
         if relation_type == 'CNN':
@@ -642,7 +642,7 @@ class Prototypical_Nets(tf.keras.Model):
         if encoder_type == "CNN":
             self.encoder = CNNEncoder(hidden_dim, final_dim)
         elif encoder_type == "NFG":
-            self.encoder = NFGEncoder(hidden_dim, final_dim)
+            self.encoder = NFGEncoder_v2(hidden_dim, Nh=8)
         else:
             raise NotImplementedError
         self.flatten = tf.keras.layers.Flatten()

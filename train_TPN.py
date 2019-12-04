@@ -16,7 +16,7 @@ import glob
 import gc
 from utils import save_statistics
 
-print("12 03,  20:31, no stop grad, make it univeraled")
+print("12 04,  22:59, no stop grad, make it univeraled using custom learning rate")
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -67,6 +67,21 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
         return learning_rate
 
 
+class CustomSchedule_v2(tf.keras.optimizers.schedules.LearningRateSchedule):
+    def __init__(self, d_model, warmup_steps=3000):
+        super(CustomSchedule_v2, self).__init__()
+
+        self.d_model = d_model
+        self.d_model = tf.cast(self.d_model, tf.float32)
+
+        self.warmup_steps = warmup_steps
+
+    def __call__(self, step):
+        arg1 = tf.math.rsqrt(step)
+        arg2 = step * (self.warmup_steps ** -1.5)
+
+        return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -91,7 +106,7 @@ def get_args():
     parser.add_argument('--relation_type', type=str, default="NFG")
     parser.add_argument('--method', type=str, default="TPN")
     parser.add_argument("--power", type=int, default=2)
-    parser.add_argument("--end_learning_rate", type=float, default=0.0)
+    parser.add_argument("--end_learning_rate", type=float, default=1e-6)
     parser.add_argument("--use_val_data", type=bool, default=True)
 
     # 如: python xx.py --foo hello  > hello
@@ -290,13 +305,16 @@ if __name__ == "__main__":
             model.load_weights(restore_path)
 
     num_train_steps=n_epochs*n_episodes
-    warmup_steps = num_train_steps // 10
+    warmup_steps = min(num_train_steps // 10, 5000)
     print("n_train_steps", num_train_steps)
     print("warmup_steps", warmup_steps)
 
     learning_rate = CustomSchedule(
         init_lr=arg.start_learning_rate, num_train_steps=n_epochs*n_episodes, warmup_steps=warmup_steps,
         end_learning_rate=arg.end_learning_rate, power=arg.power)
+    '''
+    learning_rate = CustomSchedule_v2(d_model=512, warmup_steps=warmup_steps)
+    '''
 
     FeatEnc_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
     RelMod_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
