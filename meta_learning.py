@@ -8,7 +8,7 @@ import tensorflow as tf
 from NFG_lite import Aggregator, NFG4img_v2, NFG4img
 import numpy as np
 from StandAlongSelfAtten import SASA
-print("meta learning.py, 12:04, 22:59, relmod ksize=5, protonet with nfgecoder_v2, fix bugs")
+print("meta learning.py, 12:05, 20:34, relmod ksize=5, protonet with nfgecoder_v2, fix bugs")
 
 class ConvBlock(tf.keras.layers.Layer):
     def __init__(self, out_channels, conv_padding = "SAME", pooling_padding = "VALID"):
@@ -216,8 +216,8 @@ class CNNRelationModule(tf.keras.layers.Layer):
         self.flatten = tf.keras.layers.Flatten()
 
     def call(self, x):
-        net = tf.reshape(x, [-1, 5, 5, 64])
-        net = self.conv1(net)
+        #net = tf.reshape(x, [-1, 5, 5, 64])
+        net = self.conv1(x)
         net = self.conv2(net)
 
         #print("net after conv2", net.shape)
@@ -246,9 +246,9 @@ class NFGRelationModule(tf.keras.layers.Layer):
         self.flatten = tf.keras.layers.Flatten()
 
     def call(self, x):
-        net = tf.reshape(x, [-1, 5, 5, 64])
+        #net = tf.reshape(x, [-1, 5, 5, 64])
         #net = self.agg2(net)
-        net = self.nfg1(net)
+        net = self.nfg1(x)
         #print("net after nfg1", net.shape)
         #net = self.nfg2(net)
         #print("net after nfg2", net.shape)
@@ -277,9 +277,9 @@ class NFGRelationModule_v2(tf.keras.layers.Layer):
         self.flatten = tf.keras.layers.Flatten()
 
     def call(self, x):
-        net = tf.reshape(x, [-1, 5, 5, 64])
+        #net = tf.reshape(x, [-1, 5, 5, 64])
         #net = self.agg2(net)
-        net = self.nfg1(net)
+        net = self.nfg1(x)
         #print("net after nfg1", net.shape)
         #net = self.nfg2(net)
         #print("net after nfg2", net.shape)
@@ -313,6 +313,7 @@ class RelationNets(tf.keras.Model):
             self.relation = None
         else:
             raise NotImplementedError
+        #self.flatten = tf.keras.layers.Flatten()
 
     def call(self, s, q):
         s_shape = s.shape
@@ -481,15 +482,18 @@ class TPN_stop_grad(tf.keras.Model):
         gt = tf.reshape(tf.tile(tf.expand_dims(tf.range(C), 1), [1, tf.cast(Nu / C, tf.int32)]), [-1])
 
         all_un = tf.concat([x, u], axis=0)
-        all_un = tf.reshape(all_un, [-1, 1600])
-        N, d = tf.shape(all_un)[0], tf.shape(all_un)[1]
+        #all_un = tf.reshape(all_un, [-1, 1600])
+        #N, d = tf.shape(all_un)[0], tf.shape(all_un)[1]
 
         # all_un_stop_grad = tf.stop_gradient(all_un)
 
         # compute graph weights
         if self.rn in [30, 300]:  # compute example-wise sigma
+            #all_un = tf.reshape(all_un, [-1, 5, 5, 64])
             self.sigma = self.relation(all_un)
 
+            all_un = tf.reshape(all_un, [-1, 1600])
+            N, d = tf.shape(all_un)[0], tf.shape(all_un)[1]
             all_un = all_un / (self.sigma + epsilon)
             all1 = tf.expand_dims(all_un, axis=0)
             all2 = tf.expand_dims(all_un, axis=1)

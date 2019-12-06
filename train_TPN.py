@@ -16,7 +16,7 @@ import glob
 import gc
 from utils import save_statistics
 
-print("12 04,  22:59, no stop grad, make it univeraled using custom learning rate")
+print("12 05,  19:08, no stop grad, make it univeraled using custom learning rate")
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -209,27 +209,27 @@ if __name__ == "__main__":
         X_test = test["image_data"]
         X_test = X_test.reshape([20, 600, 84, 84, 3])
         train_generator = MiniImageNet_Generator(
-            X_train, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_train)
+            X_train, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_train, aug=True)
 
         if arg.use_val_data:
             print("using validation data for validation")
-            val_generator = MiniImageNet_Generator(X_val, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_val)
+            val_generator = MiniImageNet_Generator(X_val, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_val, aug=False)
         else:
             print("Not using validation data")
             val_generator = MiniImageNet_Generator(
-                X_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_val)
+                X_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_val, aug=False)
 
         test_generator = MiniImageNet_Generator(
-                X_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_test)
+                X_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_test, aug=False)
 
         if n_shot_train == 1:
             another_shot = 5
             test_generator1 = MiniImageNet_Generator(
-                X_test, n_way=n_way_test, n_shot=another_shot, n_query=n_query_test)
+                X_test, n_way=n_way_test, n_shot=another_shot, n_query=n_query_test, aug=False)
         elif n_shot_train == 5:
             another_shot = 1
             test_generator1 = MiniImageNet_Generator(
-                X_test, n_way=n_way_test, n_shot=another_shot, n_query=n_query_test)
+                X_test, n_way=n_way_test, n_shot=another_shot, n_query=n_query_test, aug=False)
         else:
             raise NotImplementedError
 
@@ -265,13 +265,13 @@ if __name__ == "__main__":
         lbl2 = LabelEncoder()
         y_test = lbl2.fit_transform(y_test)
         train_generator = CUB_Generator(
-            X_train, y_train, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_train)
+            X_train, y_train, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_train, aug=True)
 
         test_generator = CUB_Generator(
-            X_test, y_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_test)
+            X_test, y_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_test, aug=False)
 
         test_generator1 = CUB_Generator(
-            X_test, y_test, n_way=n_way_test, n_shot=1, n_query=n_query_test)
+            X_test, y_test, n_way=n_way_test, n_shot=1, n_query=n_query_test, aug=False)
     print("X_train", X_train.shape)
     print("X_test", X_test.shape)
     print("X_val", X_val.shape)

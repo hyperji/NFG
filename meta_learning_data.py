@@ -13,11 +13,11 @@ import pandas as pd
 import time
 import matplotlib.pyplot as plt
 #import imageio
-print("meta_learning_data, no augment")
+print("meta_learning_data, augment 19:08")
 
 class MiniImageNet_Generator(object):
 
-    def __init__(self, X, n_way=5, n_shot = 1, n_query=100):
+    def __init__(self, X, n_way=5, n_shot = 1, n_query=100, aug = False):
         self.X = X
         self.n_way = n_way
         self.n_shot = n_shot
@@ -25,6 +25,7 @@ class MiniImageNet_Generator(object):
         self.n_classes = X.shape[0]
         self.n_examples_per_class = X.shape[1]
         self.base_shape = list(self.X.shape[2:])
+        self.aug = aug
 
         self.mean = 113.77  # precomputed
         # self.std = np.std(list(self.x_train)+list(self.x_val))
@@ -71,7 +72,8 @@ class MiniImageNet_Generator(object):
         #if augment:
         #    data = self.rotate_batch(data)
         data = data.astype(np.float32)
-        #data = self.augment(data)
+        if self.aug:
+            data = self.augment(data)
         #data = tf.convert_to_tensor(data, dtype=tf.float32)
 
         data = self.preprocess_batch(data)
@@ -84,7 +86,7 @@ class MiniImageNet_Generator(object):
 
 class CUB_Generator(object):
 
-    def __init__(self, X, y, n_way=5, n_shot = 1, n_query=100):
+    def __init__(self, X, y, n_way=5, n_shot = 1, n_query=100, aug = True):
         self.X = X
         self.y = y
         self.n_way = n_way
@@ -101,6 +103,7 @@ class CUB_Generator(object):
         self.cumsum = np.cumsum(self.n_examples_per_class)
         self.cumsum = np.delete(self.cumsum, -1)
         self.cumsum = np.insert(self.cumsum, 0, 0)
+        self.aug = aug
 
 
 
@@ -138,7 +141,8 @@ class CUB_Generator(object):
 
         data = data.astype(np.float32)
         #print("data.shape", data.shape)
-        data = self.augment(data)
+        if self.aug:
+            data = self.augment(data)
 
         data = tf.reshape(data, [self.n_way, self.n_shot+self.n_query] + self.base_shape)
 
