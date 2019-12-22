@@ -5,6 +5,7 @@
 # @E-mail: hj@jimhe.cn
 
 from meta_learning import TPN_stop_grad, Prototypical_Nets, RelationNets
+from egnn_fsl import EGNN_FSL
 from meta_learning_data import MiniImageNet_Generator, CUB_Generator
 import numpy as np
 import pickle
@@ -16,7 +17,7 @@ import glob
 import gc
 from utils import save_statistics
 
-print("12 21,  15:59")
+print("12 22,  17:44, dropout 0.1 fix learning rate")
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -131,7 +132,7 @@ train_accuracy = tf.keras.metrics.Mean(name='train_accuracy')
 @tf.function
 def dual_train_step(model, FeatEncOpt, RelModOpt, S, Q):
     with tf.GradientTape() as tape:
-        FeatEncLoss, RelModLoss, acc = model(S, Q)
+        FeatEncLoss, RelModLoss, acc = model(S, Q, training = True)
     #FeatEncGrads = tape.gradient(FeatEncLoss, model.encoder.trainable_variables)
     #RelModGrads = tape.gradient(RelModLoss, model.relation.trainable_variables)
     gradients = tape.gradient(RelModLoss, model.trainable_variables)
@@ -300,9 +301,6 @@ if __name__ == "__main__":
         else:
             raise NotImplementedError
 
-
-        test_generator1 = CUB_Generator(
-            X_test, y_test, n_way=n_way_test, n_shot=1, n_query=n_query_test, aug=False)
     print("X_train", X_train.shape)
     print("X_test", X_test.shape)
     print("X_val", X_val.shape)
@@ -319,6 +317,8 @@ if __name__ == "__main__":
         model = Prototypical_Nets(hidden_dim=h_dim, final_dim=z_dim, encoder_type=arg.encoder_type)
     elif arg.method == "RelNet":
         model = RelationNets(h_dim, z_dim, encoder_type = arg.encoder_type, relation_type = arg.relation_type)
+    elif arg.method == "EGNN":
+        model = EGNN_FSL(emb_size=128, in_features=None, node_features=96, edge_features=96, num_layers=3, dropout=0.1)
     else:
         raise NotImplementedError
 
@@ -340,13 +340,13 @@ if __name__ == "__main__":
     print("n_train_steps", num_train_steps)
     print("warmup_steps", warmup_steps)
 
-    learning_rate = CustomSchedule(
-        init_lr=arg.start_learning_rate, num_train_steps=n_epochs*n_episodes, warmup_steps=warmup_steps,
-        end_learning_rate=arg.end_learning_rate, power=arg.power)
-    '''
-    learning_rate = CustomSchedule_v2(d_model=512, warmup_steps=warmup_steps)
-    '''
-    #learning_rate = 1e-3
+    #learning_rate = CustomSchedule(
+    #    init_lr=arg.start_learning_rate, num_train_steps=n_epochs*n_episodes, warmup_steps=warmup_steps,
+    #    end_learning_rate=arg.end_learning_rate, power=arg.power)
+
+    #learning_rate = CustomSchedule_v2(d_model=512, warmup_steps=warmup_steps)
+
+    learning_rate = 1e-3
 
     FeatEnc_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
     RelMod_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
@@ -360,7 +360,8 @@ if __name__ == "__main__":
     logs = "{}-way {}-shot learning problems".format(n_way_train, n_shot_train)
     save_statistics(experiment_name, ["Experimental details: {}".format(logs)])
     save_statistics(experiment_name, ["epoch", "train_acc", "val_acc", "test_acc"])
-
+    if arg.method == 'EGNN':
+        model.preparing(n_way = n_way_train, n_shot=n_shot_train, n_query=n_query_train)
     for eph in range(latest_version, n_epochs+latest_version):
         for episode in range(n_episodes):
             train_loss.reset_states()
@@ -379,10 +380,12 @@ if __name__ == "__main__":
                                                                                            train_accuracy.result()))
         accs = []
         if (eph + 1) % log_every_n_epochs == 0:
+            if arg.method == 'EGNN':
+                model.preparing(n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_val)
             gc.collect()
             for episode in range(200):
                 test_data = val_generator[episode]
-                _, _, acc = model(test_data[0], test_data[1])
+                _, _, acc = model(test_data[0], test_data[1], training = False)
                 #print("test acc", acc)
                 accs.append(acc)
             mean_val_acc = np.mean(accs)
@@ -403,14 +406,18 @@ if __name__ == "__main__":
                 else:
                     print("Not using validation data, skipping saving...")
                 best_val_acc = mean_val_acc
+            if arg.method == 'EGNN':
+                model.preparing(n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_train)
 
 
 
     accs = []
+    if arg.method == 'EGNN':
+        model.preparing(n_way = n_way_test, n_shot=n_shot_train, n_query=n_query_test)
     for episode in range(arg.n_test_episodes):
 
         test_data = test_generator[episode]
-        _, _, acc = model(test_data[0], test_data[1])
+        _, _, acc = model(test_data[0], test_data[1], training = False)
         #print("test acc", acc)
         accs.append(acc)
     print("final mean acc shot %d"%(n_shot_train), np.mean(accs))
@@ -418,9 +425,11 @@ if __name__ == "__main__":
     save_statistics(experiment_name, line_to_add)
 
     accs = []
+    if arg.method == 'EGNN':
+        model.preparing(n_way = n_way_test, n_shot=another_shot, n_query=n_query_test)
     for episode in range(arg.n_test_episodes):
         test_data = test_generator1[episode]
-        _, _, acc = model(test_data[0], test_data[1])
+        _, _, acc = model(test_data[0], test_data[1], training = False)
         # print("test acc", acc)
         accs.append(acc)
     print("final mean acc shot %d"%(another_shot), np.mean(accs))
@@ -442,9 +451,11 @@ if __name__ == "__main__":
             model.load_weights(restore_path)
 
         accs = []
+        if arg.method == 'EGNN':
+            model.preparing(n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_test)
         for episode in range(arg.n_test_episodes):
             test_data = test_generator[episode]
-            _, _, acc = model(test_data[0], test_data[1])
+            _, _, acc = model(test_data[0], test_data[1], training = False)
             # print("test acc", acc)
             accs.append(acc)
         print("the best valided model mean acc shot %d" % (n_shot_train), np.mean(accs))
@@ -453,9 +464,11 @@ if __name__ == "__main__":
         save_statistics(experiment_name, line_to_add)
 
         accs = []
+        if arg.method == 'EGNN':
+            model.preparing(n_way=n_way_test, n_shot=another_shot, n_query=n_query_test)
         for episode in range(arg.n_test_episodes):
             test_data = test_generator1[episode]
-            _, _, acc = model(test_data[0], test_data[1])
+            _, _, acc = model(test_data[0], test_data[1], training = False)
             # print("test acc", acc)
             accs.append(acc)
         print("the best valided model mean acc shot %d" % (another_shot), np.mean(accs))
