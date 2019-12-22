@@ -16,7 +16,7 @@ import glob
 import gc
 from utils import save_statistics
 
-print("12 05,  19:08, no stop grad, make it univeraled using custom learning rate")
+print("12 21,  15:59")
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -260,15 +260,46 @@ if __name__ == "__main__":
         X_test = X[test_masks]
         y_test = y[test_masks]
 
+        val_masks = np.zeros_like(y)
+        for l in val_labels:
+            val_masks += y == l
+        val_masks = val_masks > 0
+        X_val = X[val_masks]
+        y_val = y[val_masks]
+
         lbl1 = LabelEncoder()
         y_train = lbl1.fit_transform(y_train)
         lbl2 = LabelEncoder()
         y_test = lbl2.fit_transform(y_test)
+        lbl3 = LabelEncoder()
+        y_val = lbl3.fit_transform(y_val)
         train_generator = CUB_Generator(
             X_train, y_train, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_train, aug=True)
 
+        if arg.use_val_data:
+            print("using validation data for validation")
+            val_generator = CUB_Generator(
+                X_val, y_val, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_val, aug=False)
+        else:
+            print("Not using validation data")
+            val_generator = CUB_Generator(
+                X_test, y_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_val, aug=False)
+
         test_generator = CUB_Generator(
             X_test, y_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_test, aug=False)
+
+
+        if n_shot_train == 1:
+            another_shot = 5
+            test_generator1 = CUB_Generator(
+                X_test, y_test, n_way=n_way_test, n_shot=another_shot, n_query=n_query_test, aug=False)
+        elif n_shot_train == 5:
+            another_shot = 1
+            test_generator1 = CUB_Generator(
+                X_test, y_test, n_way=n_way_test, n_shot=another_shot, n_query=n_query_test, aug=False)
+        else:
+            raise NotImplementedError
+
 
         test_generator1 = CUB_Generator(
             X_test, y_test, n_way=n_way_test, n_shot=1, n_query=n_query_test, aug=False)
@@ -315,6 +346,7 @@ if __name__ == "__main__":
     '''
     learning_rate = CustomSchedule_v2(d_model=512, warmup_steps=warmup_steps)
     '''
+    #learning_rate = 1e-3
 
     FeatEnc_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
     RelMod_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
