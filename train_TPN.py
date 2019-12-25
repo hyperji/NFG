@@ -16,8 +16,9 @@ import os
 import glob
 import gc
 from utils import save_statistics
+import shutil
 
-print("12 22,  17:44, dropout 0.1 fix learning rate")
+print("12 24,  13:37, dropout 0.1 custom1 learning rate, add delete module add l2 norm only 3 layer")
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -340,13 +341,13 @@ if __name__ == "__main__":
     print("n_train_steps", num_train_steps)
     print("warmup_steps", warmup_steps)
 
-    #learning_rate = CustomSchedule(
-    #    init_lr=arg.start_learning_rate, num_train_steps=n_epochs*n_episodes, warmup_steps=warmup_steps,
-    #    end_learning_rate=arg.end_learning_rate, power=arg.power)
+    learning_rate = CustomSchedule(
+        init_lr=arg.start_learning_rate, num_train_steps=n_epochs*n_episodes, warmup_steps=warmup_steps,
+        end_learning_rate=arg.end_learning_rate, power=arg.power)
 
     #learning_rate = CustomSchedule_v2(d_model=512, warmup_steps=warmup_steps)
 
-    learning_rate = 1e-3
+    #learning_rate = 1e-3
 
     FeatEnc_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
     RelMod_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
@@ -394,6 +395,17 @@ if __name__ == "__main__":
                 line_to_add = [eph+1, train_accuracy.result().numpy(), mean_val_acc, "None"]
                 save_statistics(experiment_name, line_to_add)
                 if arg.use_val_data:
+
+                    compat_names = arg.dataset + "_" + arg.method + "_" + arg.encoder_type + "_" + str(
+                        arg.n_way_train) + "_" + str(
+                        arg.n_shot_train) + "_"
+                    compat_dir_path = os.path.join(arg.ckpt, compat_names)
+                    all_compatiable_models = glob.glob(compat_dir_path + '*')
+                    if len(all_compatiable_models) > 0:
+                        for delete_path in all_compatiable_models:
+                            print("delete_path", delete_path)
+                            shutil.rmtree(delete_path)
+
                     print("surpass the best_val_acc, saving model...")
                     save_name = arg.dataset + "_" + arg.method + "_" + arg.encoder_type + "_" + str(arg.n_way_train) + "_" + str(
                         arg.n_shot_train) + "_" + str(eph+1)

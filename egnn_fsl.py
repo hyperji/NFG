@@ -1,6 +1,6 @@
 import tensorflow as tf
-
-print("egnn_fsl 12 22, 20:10 custom bce func")
+from meta_learning import CNNEncoder
+print("egnn_fsl 12 23, 15:30 custom bce func add l2 norm remove leaky updated Embedding Module update norm")
 class EmbeddingImagenet_tf(tf.keras.layers.Layer):
     def __init__(self, emb_size):
         super(EmbeddingImagenet_tf, self).__init__()
@@ -8,51 +8,58 @@ class EmbeddingImagenet_tf(tf.keras.layers.Layer):
         self.hidden = 64
         self.last_hidden = self.hidden * 25
         self.emb_size = emb_size
-
+        self.encoder = CNNEncoder(hidden_dim=64, final_dim=64)
+        '''
         self.conv_1 = tf.keras.Sequential([tf.keras.layers.Conv2D(
             filters=self.hidden,
             kernel_size=3,
             padding="SAME",
-            use_bias=False),
+            use_bias=False,
+            kernel_regularizer=tf.keras.regularizers.l2(1e-6)),
             tf.keras.layers.BatchNormalization(),
             tf.keras.layers.MaxPool2D(2),
-            tf.keras.layers.LeakyReLU()])
+            tf.keras.layers.ReLU()])
 
 
         self.conv_2 = tf.keras.Sequential([tf.keras.layers.Conv2D(
             filters=int(self.hidden*1.5),
             kernel_size=3,
             padding="SAME",
-            use_bias=False),
+            use_bias=False,
+            kernel_regularizer=tf.keras.regularizers.l2(1e-6)),
             tf.keras.layers.BatchNormalization(),
             tf.keras.layers.MaxPool2D(2),
-            tf.keras.layers.LeakyReLU()])
+            tf.keras.layers.ReLU()])
 
         self.conv_3 = tf.keras.Sequential([tf.keras.layers.Conv2D(
             filters=int(self.hidden * 2),
             kernel_size=3,
             padding="SAME",
-            use_bias=False),
+            use_bias=False,
+            kernel_regularizer=tf.keras.regularizers.l2(1e-6)),
             tf.keras.layers.BatchNormalization(),
             tf.keras.layers.MaxPool2D(2),
-            tf.keras.layers.LeakyReLU()])
+            tf.keras.layers.ReLU()])
 
         self.conv_4 = tf.keras.Sequential([tf.keras.layers.Conv2D(
             filters=int(self.hidden * 4),
             kernel_size=3,
             padding="SAME",
-            use_bias=False),
+            use_bias=False,
+            kernel_regularizer=tf.keras.regularizers.l2(1e-6)),
             tf.keras.layers.BatchNormalization(),
             tf.keras.layers.MaxPool2D(2),
-            tf.keras.layers.LeakyReLU()])
+            tf.keras.layers.ReLU()])
 
         self.dropout1 = tf.keras.layers.Dropout(0.4)
         self.dropout2 = tf.keras.layers.Dropout(0.5)
-
-        self.layer_last = tf.keras.Sequential([tf.keras.layers.Dense(self.emb_size, use_bias=True),
-            tf.keras.layers.BatchNormalization()])
+        '''
+        #self.layer_last = tf.keras.Sequential([tf.keras.layers.Dense(self.emb_size, use_bias=True,
+        #                                                             kernel_regularizer=tf.keras.regularizers.l2(1e-6)),
+        #    tf.keras.layers.BatchNormalization()])
 
     def call(self, inputs, training = True):
+        '''
         output_data = self.conv_1(inputs)
 
         output_data = self.conv_2(output_data)
@@ -64,9 +71,11 @@ class EmbeddingImagenet_tf(tf.keras.layers.Layer):
         output_data = self.conv_4(output_data)
         if training:
             output_data = self.dropout2(output_data)
-
+        '''
+        output_data = self.encoder(inputs)
+        #print("output_data.shape", output_data.shape)
         output_data = tf.reshape(output_data, [output_data.shape[0], -1])
-        return self.layer_last(output_data)
+        return output_data#self.layer_last(output_data)
 
 
 class NodeUpdateNetwork_tf(tf.keras.layers.Layer):
@@ -83,18 +92,20 @@ class NodeUpdateNetwork_tf(tf.keras.layers.Layer):
             tf.keras.layers.Conv2D(
                 filters=self.num_features_list[0],
                 kernel_size=1,
-                use_bias=False),
+                use_bias=False,
+                kernel_regularizer=tf.keras.regularizers.l2(1e-6)),
             tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.LeakyReLU()
+            tf.keras.layers.ReLU()
         ])
 
         self.conv2 = tf.keras.Sequential([
             tf.keras.layers.Conv2D(
                 filters=self.num_features_list[1],
                 kernel_size=1,
-                use_bias=False),
+                use_bias=False,
+                kernel_regularizer=tf.keras.regularizers.l2(1e-6)),
             tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.LeakyReLU()
+            tf.keras.layers.ReLU()
         ])
         self.dropout = tf.keras.layers.Dropout(dropout)
 
@@ -115,8 +126,8 @@ class NodeUpdateNetwork_tf(tf.keras.layers.Layer):
         edge_feat = edge_feat * diag_mask
 
         # set diagonal as zero and normalize
-        norms = tf.linalg.norm(edge_feat, ord=1, axis=-1, keepdims=True)
-        edge_feat = tf.math.divide_no_nan(edge_feat,norms)
+        norms = tf.reduce_sum(edge_feat, axis=-1, keepdims=True) #tf.linalg.norm(edge_feat, ord=1, axis=-1, keepdims=True)
+        edge_feat = edge_feat / (norms + 1e-6)#tf.math.divide_no_nan(edge_feat,norms)
         #print(edge_feat)
         #return edge_feat
         #print(norms)
@@ -169,36 +180,40 @@ class EdgeUpdateNetwork_tf(tf.keras.layers.Layer):
         self.conv1 = tf.keras.Sequential([
             tf.keras.layers.Conv2D(filters=self.num_features_list[0],
                                    kernel_size=1,
-                                   use_bias=False),
+                                   use_bias=False,
+                                   kernel_regularizer=tf.keras.regularizers.l2(1e-6)),
             tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.LeakyReLU()
+            tf.keras.layers.ReLU()
         ])
         self.dropout1 = tf.keras.layers.Dropout(dropout)
 
         self.conv2 = tf.keras.Sequential([
             tf.keras.layers.Conv2D(filters=self.num_features_list[1],
                                    kernel_size=1,
-                                   use_bias=False),
+                                   use_bias=False,
+                                   kernel_regularizer=tf.keras.regularizers.l2(1e-6)),
             tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.LeakyReLU()
+            tf.keras.layers.ReLU()
         ])
         self.dropout2 = tf.keras.layers.Dropout(dropout)
 
         self.conv3 = tf.keras.Sequential([
             tf.keras.layers.Conv2D(filters=self.num_features_list[2],
                                    kernel_size=1,
-                                   use_bias=False),
+                                   use_bias=False,
+                                   kernel_regularizer=tf.keras.regularizers.l2(1e-6)),
             tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.LeakyReLU()
+            tf.keras.layers.ReLU()
         ])
         self.dropout3 = tf.keras.layers.Dropout(dropout)
 
         self.conv4 = tf.keras.Sequential([
             tf.keras.layers.Conv2D(filters=self.num_features_list[3],
                                    kernel_size=1,
-                                   use_bias=False),
+                                   use_bias=False,
+                                   kernel_regularizer=tf.keras.regularizers.l2(1e-6)),
             tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.LeakyReLU()
+            tf.keras.layers.ReLU()
         ])
         self.dropout4 = tf.keras.layers.Dropout(dropout)
 
@@ -246,8 +261,8 @@ class EdgeUpdateNetwork_tf(tf.keras.layers.Layer):
         edge_feat = edge_feat * sims
         # set diagonal as zero and normalize
 
-        norms = tf.linalg.norm(edge_feat, ord=1, axis=-1, keepdims=True)
-        edge_feat = tf.math.divide_no_nan(edge_feat, norms)
+        norms = tf.reduce_sum(edge_feat, axis=-1, keepdims=True) #tf.linalg.norm(edge_feat, ord=1, axis=-1, keepdims=True)
+        edge_feat = edge_feat / (norms + 1e-6) #tf.math.divide_no_nan(edge_feat, norms)
 
         edge_feat = edge_feat * merge_sum
 
@@ -303,13 +318,13 @@ class GraphNetwork_tf(tf.keras.layers.Layer):
             # set edge to node
             edge2node_net = NodeUpdateNetwork_tf(in_features=self.in_features if l == 0 else self.node_features,
                                               num_features=self.node_features,
-                                              dropout=self.dropout if l < self.num_layers-1 else 0.0)
+                                              dropout=self.dropout)# if l < self.num_layers-1 else 0.0)
 
             # set node to edge
             node2edge_net = EdgeUpdateNetwork_tf(in_features=self.node_features,
                                               num_features=self.edge_features,
                                               separate_dissimilarity=False,
-                                              dropout=self.dropout if l < self.num_layers-1 else 0.0)
+                                              dropout=self.dropout)# if l < self.num_layers-1 else 0.0)
 
             self._modules['edge2node_net{}'.format(l)] = edge2node_net
             self._modules['node2edge_net{}'.format(l)] = node2edge_net
@@ -510,5 +525,6 @@ class EGNN_FSL(tf.keras.Model):
             total_loss += [tf.reshape(total_loss_layers[l], [-1]) * 0.5]
         total_loss += [tf.reshape(total_loss_layers[-1], [-1]) * 1.0]
         total_loss = tf.reduce_mean(tf.concat(total_loss, axis=0))
+        total_loss += tf.reduce_sum(self.losses)
 
         return full_logit_layers[-1], total_loss, query_node_accr_layers[-1]
