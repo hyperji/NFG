@@ -1,6 +1,6 @@
 import tensorflow as tf
 from meta_learning import CNNEncoder
-print("egnn_fsl 12 23, 15:30 custom bce func add l2 norm remove leaky updated Embedding Module update norm")
+print("egnn_fsl 12 27, 15:45 use rolling back")
 class EmbeddingImagenet_tf(tf.keras.layers.Layer):
     def __init__(self, emb_size):
         super(EmbeddingImagenet_tf, self).__init__()
@@ -8,8 +8,8 @@ class EmbeddingImagenet_tf(tf.keras.layers.Layer):
         self.hidden = 64
         self.last_hidden = self.hidden * 25
         self.emb_size = emb_size
-        self.encoder = CNNEncoder(hidden_dim=64, final_dim=64)
-        '''
+        #self.encoder = CNNEncoder(hidden_dim=64, final_dim=64)
+
         self.conv_1 = tf.keras.Sequential([tf.keras.layers.Conv2D(
             filters=self.hidden,
             kernel_size=3,
@@ -53,13 +53,13 @@ class EmbeddingImagenet_tf(tf.keras.layers.Layer):
 
         self.dropout1 = tf.keras.layers.Dropout(0.4)
         self.dropout2 = tf.keras.layers.Dropout(0.5)
-        '''
-        #self.layer_last = tf.keras.Sequential([tf.keras.layers.Dense(self.emb_size, use_bias=True,
-        #                                                             kernel_regularizer=tf.keras.regularizers.l2(1e-6)),
-        #    tf.keras.layers.BatchNormalization()])
+
+        self.layer_last = tf.keras.Sequential([tf.keras.layers.Dense(self.emb_size, use_bias=True,
+                                                                     kernel_regularizer=tf.keras.regularizers.l2(1e-6)),
+            tf.keras.layers.BatchNormalization()])
 
     def call(self, inputs, training = True):
-        '''
+
         output_data = self.conv_1(inputs)
 
         output_data = self.conv_2(output_data)
@@ -71,11 +71,11 @@ class EmbeddingImagenet_tf(tf.keras.layers.Layer):
         output_data = self.conv_4(output_data)
         if training:
             output_data = self.dropout2(output_data)
-        '''
-        output_data = self.encoder(inputs)
+
+        #output_data = self.encoder(inputs)
         #print("output_data.shape", output_data.shape)
         output_data = tf.reshape(output_data, [output_data.shape[0], -1])
-        return output_data#self.layer_last(output_data)
+        return self.layer_last(output_data) #output_data
 
 
 class NodeUpdateNetwork_tf(tf.keras.layers.Layer):
@@ -123,11 +123,11 @@ class NodeUpdateNetwork_tf(tf.keras.layers.Layer):
         #print("diag_mask", diag_mask.shape)
         #print("edge_feat", edge_feat.shape)
 
-        edge_feat = edge_feat * diag_mask
+        atten = edge_feat * diag_mask
 
         # set diagonal as zero and normalize
-        norms = tf.reduce_sum(edge_feat, axis=-1, keepdims=True) #tf.linalg.norm(edge_feat, ord=1, axis=-1, keepdims=True)
-        edge_feat = edge_feat / (norms + 1e-6)#tf.math.divide_no_nan(edge_feat,norms)
+        norms = tf.linalg.norm(atten, ord=1, axis=-1, keepdims=True)#tf.reduce_sum(edge_feat, axis=-1, keepdims=True)
+        atten = tf.math.divide_no_nan(atten, norms)#edge_feat / (norms + 1e-6)
         #print(edge_feat)
         #return edge_feat
         #print(norms)
@@ -135,7 +135,7 @@ class NodeUpdateNetwork_tf(tf.keras.layers.Layer):
 
 
         # compute attention and aggregate
-        aggr_feat = tf.matmul(tf.squeeze(tf.concat(tf.split(edge_feat, [1, 1], axis=1), axis=2), axis=1), node_feat)
+        aggr_feat = tf.matmul(tf.squeeze(tf.concat(tf.split(atten, [1, 1], axis=1), axis=2), axis=1), node_feat)
 
         #print("aggr_feat after matmul", aggr_feat.shape)
 
@@ -261,8 +261,8 @@ class EdgeUpdateNetwork_tf(tf.keras.layers.Layer):
         edge_feat = edge_feat * sims
         # set diagonal as zero and normalize
 
-        norms = tf.reduce_sum(edge_feat, axis=-1, keepdims=True) #tf.linalg.norm(edge_feat, ord=1, axis=-1, keepdims=True)
-        edge_feat = edge_feat / (norms + 1e-6) #tf.math.divide_no_nan(edge_feat, norms)
+        norms = tf.linalg.norm(edge_feat, ord=1, axis=-1, keepdims=True)#tf.reduce_sum(edge_feat, axis=-1, keepdims=True)
+        edge_feat = tf.math.divide_no_nan(edge_feat, norms) #edge_feat / (norms + 1e-6)
 
         edge_feat = edge_feat * merge_sum
 

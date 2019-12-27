@@ -315,7 +315,7 @@ class RelationNets(tf.keras.Model):
             raise NotImplementedError
         #self.flatten = tf.keras.layers.Flatten()
 
-    def call(self, s, q):
+    def call(self, s, q, **kwargs):
         s_shape = s.shape
         q_shape = q.shape
         n_way = s_shape[0]
@@ -417,7 +417,7 @@ class TPN_stop_grad(tf.keras.Model):
         else:  # learned sigma and alpha
             self.alpha = tf.Variable(self.alpha, name='alpha', trainable=True)
 
-    def call(self, s, q):
+    def call(self, s, q, **kwargs):
         s_shape = s.shape
         q_shape = q.shape
         num_classes, num_support = s_shape[0], s_shape[1]
@@ -572,7 +572,7 @@ class NFG_Prototypical_Nets(tf.keras.Model):
         self.ln = tf.keras.layers.LayerNormalization()
         self.loss_func = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
 
-    def call(self, s, q):
+    def call(self, s, q, **kwargs):
         s_shape = s.shape
         q_shape = q.shape
         n_way = s_shape[0]
@@ -652,7 +652,7 @@ class Prototypical_Nets(tf.keras.Model):
             raise NotImplementedError
         self.flatten = tf.keras.layers.Flatten()
 
-    def call(self, s, q):
+    def call(self, s, q, **kwargs):
         s_shape = s.shape
         q_shape = q.shape
         n_way = s_shape[0]

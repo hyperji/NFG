@@ -6,7 +6,7 @@
 
 from meta_learning import TPN_stop_grad, Prototypical_Nets, RelationNets
 from egnn_fsl import EGNN_FSL
-from meta_learning_data import MiniImageNet_Generator, CUB_Generator
+from meta_learning_data import MiniImageNet_Generator, CUB_Generator, MiniImageNet_Generator_as_egnn
 import numpy as np
 import pickle
 import tensorflow as tf
@@ -18,7 +18,7 @@ import gc
 from utils import save_statistics
 import shutil
 
-print("12 24,  13:37, dropout 0.1 custom1 learning rate, add delete module add l2 norm only 3 layer")
+print("12 27,  15:44, dropout 0.1 custom1 learning rate, add delete module add l2 norm only 3 layer")
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -210,27 +210,27 @@ if __name__ == "__main__":
 
         X_test = test["image_data"]
         X_test = X_test.reshape([20, 600, 84, 84, 3])
-        train_generator = MiniImageNet_Generator(
+        train_generator = MiniImageNet_Generator_as_egnn(
             X_train, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_train, aug=True)
 
         if arg.use_val_data:
             print("using validation data for validation")
-            val_generator = MiniImageNet_Generator(X_val, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_val, aug=False)
+            val_generator = MiniImageNet_Generator_as_egnn(X_val, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_val, aug=False)
         else:
             print("Not using validation data")
-            val_generator = MiniImageNet_Generator(
+            val_generator = MiniImageNet_Generator_as_egnn(
                 X_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_val, aug=False)
 
-        test_generator = MiniImageNet_Generator(
+        test_generator = MiniImageNet_Generator_as_egnn(
                 X_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_test, aug=False)
 
         if n_shot_train == 1:
             another_shot = 5
-            test_generator1 = MiniImageNet_Generator(
+            test_generator1 = MiniImageNet_Generator_as_egnn(
                 X_test, n_way=n_way_test, n_shot=another_shot, n_query=n_query_test, aug=False)
         elif n_shot_train == 5:
             another_shot = 1
-            test_generator1 = MiniImageNet_Generator(
+            test_generator1 = MiniImageNet_Generator_as_egnn(
                 X_test, n_way=n_way_test, n_shot=another_shot, n_query=n_query_test, aug=False)
         else:
             raise NotImplementedError
