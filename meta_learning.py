@@ -8,7 +8,7 @@ import tensorflow as tf
 from NFG_lite import Aggregator, NFG4img_v2, NFG4img
 import numpy as np
 from StandAlongSelfAtten import SASA
-print("meta learning.py, 12.17, 23:28, encoder ksize=3 Nh = 8, relmod ksize=5, agg3 with nfgencoder_v2 protonet with nfgecoder_v3, Nh=8")
+print("meta learning.py, 12.30, 22:25, encoder ksize=3 Nh = 8, relmod ksize=5, agg3 with nfgencoder_v2 protonet with nfgecoder_v3, Nh=8")
 
 class ConvBlock(tf.keras.layers.Layer):
     def __init__(self, out_channels, conv_padding = "SAME", pooling_padding = "VALID"):
@@ -265,7 +265,6 @@ class NFGRelationModule(tf.keras.layers.Layer):
 class NFGRelationModule_v2(tf.keras.layers.Layer):
     def __init__(self, h_dims = (64, 16), Nhs = (8, 2)):
         super(NFGRelationModule_v2, self).__init__()
-        self.agg2 = Aggregator(ksize=2, strides=1, padding="SAME")
         self.nfg1 = NFGBlock_v2(ksize=5, strides=2, d_neuron=h_dims[0], dv=h_dims[0],
                                 Nh=Nhs[0], final_dim=h_dims[0], padding='VALID')
         '''
@@ -707,6 +706,141 @@ class Prototypical_Nets(tf.keras.Model):
 
         return log_p_y, ce_loss, acc
 
+'''
+class MatchingNetwork(tf.keras.Model):
+    def __init__(self, hidden_dim, final_dim, encoder_type="CNN", lstm_size=32, batch_size=32):
+        super(MatchingNetwork, self).__init__()
+
+        self.batch_size = batch_size
+
+        if encoder_type == "CNN":
+            self.encoder = CNNEncoder(hidden_dim, final_dim)
+        elif encoder_type == "NFG":
+            self.encoder = NFGEncoder_v3(hidden_dim, Nh=8)
+        else:
+            raise NotImplementedError
+        self.flatten = tf.keras.layers.Flatten()
+
+        # Fully contextual embedding
+
+        self.fce_dim = int(np.floor(84 / 16)) ** 2 * 64  # Input LSTM dimenstion
+        self.fce = tf.keras.Sequential([
+            tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(lstm_size, return_sequences=True))
+        ])
+
+    @tf.function
+    def call(self, x_support, y_support, x_query, y_query):
+
+        def _calc_cosine_distances(support, query_img):
+            """
+            Calculate cosine distances between support images and query one.
+            Args:
+                support (Tensor): Tensor of support images
+                query_img (Tensor): query image
+            Returns:
+            """
+            eps = 1e-10
+            similarities = tf.zeros([self.support_samples, self.batch],
+                                    tf.float32)
+            i_sample = 0
+            for support_image in support:
+                sum_support = tf.reduce_sum(tf.square(support_image), axis=1)
+                support_magnitude = tf.math.rsqrt(
+                    tf.clip_by_value(sum_support, eps, float("inf")))
+                dot_prod = batch_dot(
+                    tf.expand_dims(query_img, 1),
+                    tf.expand_dims(support_image, 2)
+                )
+                dot_prod = tf.squeeze(dot_prod)
+                cos_sim = tf.multiply(dot_prod, support_magnitude)
+                cos_sim = tf.reshape(cos_sim, [1, -1])
+                similarities = tf.tensor_scatter_nd_update(similarities,
+                                                           [[i_sample]],
+                                                           cos_sim)
+                i_sample += 1
+            return tf.transpose(similarities)
+
+        self.batch = x_support.shape[0]
+        self.support_samples = x_support.shape[1]
+        self.query_samples = x_query.shape[1]
+
+        # Get one-hot representation
+        y_support = tf.cast(y_support, tf.int32)
+        y_support_one_hot = tf.one_hot(y_support, self.way, axis=-1)
+        y_support_one_hot = tf.cast(y_support_one_hot, tf.float32)
+
+        y_query = tf.cast(y_query, tf.int32)
+        y_query_one_hot = tf.one_hot(y_query, self.way, axis=-1)
+        y_query_one_hot = tf.cast(y_query_one_hot, tf.float32)
+
+        # Embeddings for support images
+        emb_imgs = []
+        for i in range(self.support_samples):
+            emb_imgs.append(self.g(x_support[:, i, :, :, :]))
+
+        # Embeddings for query images
+        for i_query in range(self.query_samples):
+            query_emb = self.g(x_query[:, i_query, :, :, :])
+            emb_imgs.append(query_emb)
+            outputs = tf.stack(emb_imgs)
+
+            # Fully contextual embedding
+            outputs = self.fce(outputs)
+
+            # Cosine similarity between support set and query
+            similarities = _calc_cosine_distances(outputs[:-1], outputs[-1])
+
+            # Produce predictions for target probabilities
+            similarities = tf.nn.softmax(similarities)
+            similarities = tf.expand_dims(similarities, 1)
+            preds = tf.squeeze(batch_dot(similarities, y_support_one_hot))
+
+            query_labels = y_query_one_hot[:, i_query, :]
+            eq = tf.cast(tf.equal(
+                tf.cast(tf.argmax(preds, axis=-1), tf.int32),
+                tf.cast(y_query[:, i_query], tf.int32)), tf.float32)
+            if i_query == 0:
+                ce = categorical_crossentropy(query_labels, preds)
+                acc = tf.reduce_mean(eq)
+            else:
+                ce += categorical_crossentropy(query_labels, preds)
+                acc += tf.reduce_mean(eq)
+
+            emb_imgs.pop()
+
+        return ce / self.query_samples, acc / self.query_samples
+
+    def save(self, dir_path):
+        """
+        Save model to the provided directory.
+        Args:
+            dir_path (str): path to the directory to save the model files.
+        Returns: None
+        """
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+        # Save CNN encoder
+        self.g.save(os.path.join(dir_path, 'cnn_encoder.h5'))
+        # Save LSTM
+        self.fce.save(os.path.join(dir_path, 'lstm.h5'))
+
+    def load(self, dir_path):
+        """
+        Load model from provided directory.
+        Args:
+            dir_path (str): path to the directory from where restore model.
+        Returns: None
+        """
+        # Encoder CNN
+        encoder_path = os.path.join(dir_path, 'cnn_encoder.h5')
+        self.g(tf.zeros([1, self.w, self.h, self.c]))
+        self.g.load_weights(encoder_path)
+
+        # LSTM
+        lstm_path = os.path.join(dir_path, 'lstm.h5')
+        self.fce(tf.zeros([1, self.batch_size, self.fce_dim]))
+        self.fce.load_weights(lstm_path)
+'''
 
 
 def euclidean_distance(a, b):

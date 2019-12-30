@@ -18,7 +18,7 @@ import gc
 from utils import save_statistics
 import shutil
 
-print("12 27,  15:44, dropout 0.1 custom1 learning rate, add delete module add l2 norm only 3 layer")
+print("12 30,  22:05, dropout 0.1 custom1 learning rate, add delete module add l2 norm only 3 layer, original norm")
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
@@ -195,6 +195,7 @@ if __name__ == "__main__":
 
 
     if arg.dataset == "mini-ImageNet":
+
         train_in = open("./data/mini-imagenet/mini-imagenet-cache-train.pkl","rb")
         test_in = open("./data/mini-imagenet/mini-imagenet-cache-test.pkl", "rb")
         val_in = open("./data/mini-imagenet/mini-imagenet-cache-val.pkl", 'rb')
@@ -210,27 +211,32 @@ if __name__ == "__main__":
 
         X_test = test["image_data"]
         X_test = X_test.reshape([20, 600, 84, 84, 3])
-        train_generator = MiniImageNet_Generator_as_egnn(
+
+        #X_train = np.load("./data/mini-imagenet/mini-imagenet-train.npy")
+        #X_val = np.load("./data/mini-imagenet/mini-imagenet-val.npy")
+        #X_test = np.load("./data/mini-imagenet/mini-imagenet-test.npy")
+
+        train_generator = MiniImageNet_Generator(
             X_train, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_train, aug=True)
 
         if arg.use_val_data:
             print("using validation data for validation")
-            val_generator = MiniImageNet_Generator_as_egnn(X_val, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_val, aug=False)
+            val_generator = MiniImageNet_Generator(X_val, n_way=n_way_train, n_shot=n_shot_train, n_query=n_query_val, aug=False)
         else:
             print("Not using validation data")
-            val_generator = MiniImageNet_Generator_as_egnn(
+            val_generator = MiniImageNet_Generator(
                 X_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_val, aug=False)
 
-        test_generator = MiniImageNet_Generator_as_egnn(
+        test_generator = MiniImageNet_Generator(
                 X_test, n_way=n_way_test, n_shot=n_shot_train, n_query=n_query_test, aug=False)
 
         if n_shot_train == 1:
             another_shot = 5
-            test_generator1 = MiniImageNet_Generator_as_egnn(
+            test_generator1 = MiniImageNet_Generator(
                 X_test, n_way=n_way_test, n_shot=another_shot, n_query=n_query_test, aug=False)
         elif n_shot_train == 5:
             another_shot = 1
-            test_generator1 = MiniImageNet_Generator_as_egnn(
+            test_generator1 = MiniImageNet_Generator(
                 X_test, n_way=n_way_test, n_shot=another_shot, n_query=n_query_test, aug=False)
         else:
             raise NotImplementedError
@@ -239,7 +245,6 @@ if __name__ == "__main__":
         data_in = open("./data/CUB_200_2011/CUB_200_2011.pkl", "rb")
         data_in = pickle.load(data_in)
         X = data_in['X']
-        X = tf.image.per_image_standardization(X)
         X = X.numpy()
         y = data_in['y']
         del data_in

@@ -313,11 +313,11 @@ class NFG4img_v2(tf.keras.layers.Layer):
 
         glogits = tf.nn.relu(glogits)
         sum_glogits = tf.reduce_sum(glogits, axis=[1, 2], keepdims=True)
-        activations = (tf.cast(vH * vW, tf.float32) / (sum_glogits + 1e-6)) * glogits
+        activations = (tf.cast(vH * vW, tf.float32) / (sum_glogits + 1e-6)) * glogits #[128, 84, 84, 8]
 
-        activations = tf.expand_dims(activations, axis=-1)
-        activations = tf.tile(activations, [1, 1, 1, 1, self.dvh])
-        activations = tf.reshape(activations, [tf.shape(inps)[0], vH, vW, self.dv])
+        activations = tf.expand_dims(activations, axis=-1) #[128, 84, 84, 8, 1]
+        activations = tf.tile(activations, [1, 1, 1, 1, self.dvh]) #[128, 84, 84, 8, dvh]
+        activations = tf.reshape(activations, [tf.shape(inps)[0], vH, vW, self.dv]) #[128, 84, 84, 8*dvh]
 
         return activations
 
