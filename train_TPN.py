@@ -245,7 +245,7 @@ if __name__ == "__main__":
         data_in = open("./data/CUB_200_2011/CUB_200_2011.pkl", "rb")
         data_in = pickle.load(data_in)
         X = data_in['X']
-        X = X.numpy()
+        #X = X.numpy()
         y = data_in['y']
         del data_in
         permutated_labels = np.random.permutation(200)
